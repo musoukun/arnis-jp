@@ -127,6 +127,17 @@
           </div>
         </div>
 
+        <!-- Satellite Color Toggle Button -->
+        <div class="settings-row">
+          <label for="satellite-toggle">
+            <span data-localize="satellite_colors">Satellite Colors</span>
+            <span class="tooltip-icon" data-tooltip="Determine building colors from satellite imagery instead of random presets">?</span>
+          </label>
+          <div class="settings-control">
+            <input type="checkbox" id="satellite-toggle" name="satellite-toggle">
+          </div>
+        </div>
+
         <!-- City Ground Toggle Button -->
         <div class="settings-row">
           <label for="city-boundaries-toggle">
@@ -135,6 +146,17 @@
           </label>
           <div class="settings-control">
             <input type="checkbox" id="city-boundaries-toggle" name="city-boundaries-toggle" checked>
+          </div>
+        </div>
+
+        <!-- GSI Building Data Toggle Button -->
+        <div class="settings-row">
+          <label for="gsi-toggle">
+            <span data-localize="gsi_buildings">GSI Buildings (Japan)</span>
+            <span class="tooltip-icon" data-tooltip="Use building data from Japan's Geospatial Information Authority (国土地理院). Provides much more building coverage for Japan than OSM alone. Tiles are cached locally for offline reuse.">?</span>
+          </label>
+          <div class="settings-control">
+            <input type="checkbox" id="gsi-toggle" name="gsi-toggle">
           </div>
         </div>
 

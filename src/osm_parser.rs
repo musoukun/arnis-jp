@@ -11,14 +11,14 @@ use std::sync::Arc;
 // Raw data from OSM
 
 #[derive(Debug, Deserialize)]
-struct OsmMember {
-    r#type: String,
-    r#ref: u64,
-    r#role: String,
+pub(crate) struct OsmMember {
+    pub r#type: String,
+    pub r#ref: u64,
+    pub r#role: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct OsmElement {
+pub(crate) struct OsmElement {
     pub r#type: String,
     pub id: u64,
     pub lat: Option<f64>,
@@ -31,7 +31,7 @@ struct OsmElement {
 
 #[derive(Debug, Deserialize)]
 pub struct OsmData {
-    elements: Vec<OsmElement>,
+    pub(crate) elements: Vec<OsmElement>,
     #[serde(default)]
     pub remark: Option<String>,
 }
@@ -40,6 +40,19 @@ impl OsmData {
     /// Returns true if there are no elements in the OSM data
     pub fn is_empty(&self) -> bool {
         self.elements.is_empty()
+    }
+
+    /// Create OsmData from a vector of elements
+    pub(crate) fn from_elements(elements: Vec<OsmElement>) -> Self {
+        Self {
+            elements,
+            remark: None,
+        }
+    }
+
+    /// Merge another OsmData into this one
+    pub(crate) fn merge(&mut self, other: OsmData) {
+        self.elements.extend(other.elements);
     }
 }
 
@@ -173,7 +186,7 @@ pub fn parse_osm_data(
     bbox: LLBBox,
     scale: f64,
     debug: bool,
-) -> (Vec<ProcessedElement>, XZBBox) {
+) -> (Vec<ProcessedElement>, XZBBox, CoordTransformer) {
     println!("{} Parsing data...", "[2/7]".bold());
     println!("Bounding box: {bbox:?}");
     emit_gui_progress_update(5.0, "Parsing data...");
@@ -368,7 +381,7 @@ pub fn parse_osm_data(
     drop(nodes_map);
     drop(ways_map);
 
-    (processed_elements, xzbbox)
+    (processed_elements, xzbbox, coord_transformer)
 }
 
 /// Returns true if tags indicate a water element handled by water_areas.rs.
