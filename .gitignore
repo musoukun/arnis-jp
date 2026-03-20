@@ -1,0 +1,52 @@
+/wiki
+*.mcworld
+
+# Environment files
+.env
+/.direnv
+
+# Build artifacts
+/target
+**/*.rs.bk
+
+# IDE/editor files
+.idea/
+/.vscode/
+/*.swp
+*.iml
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.ps1
+
+# System files
+.DS_Store
+Thumbs.db
+*.tmp
+*.log
+
+# Generated files
+/export.json
+/parsed_osm_data.txt
+/elevation_debug.png
+/terrain-tile-cache
+/arnis-tile-cache
+/gen/
+/build/
+*.rmeta
+*.dSYM
+
+# Tauri specific
+flake/
+gen/
+
+# Miscellaneous
+*.bak
+*.old
+*.orig
+
+# Ignore all in flake directory except specific files
+/flake/*
+!/flake/flake.nix
+!/flake/flake.lock

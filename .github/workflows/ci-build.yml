@@ -1,0 +1,74 @@
+name: CI Build
+
+# Trigger CI on pull requests when relevant files change, and pushes to main
+on:
+  pull_request:
+    paths:
+      - '.github/**'
+      - 'src/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@v1
+      with:
+        toolchain: stable
+        components: clippy, rustfmt
+
+    - name: Install Linux dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y software-properties-common
+        sudo add-apt-repository universe
+        echo "deb http://archive.ubuntu.com/ubuntu $(lsb_release -sc)-backports main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
+        sudo apt update
+        sudo apt install -y libgtk-3-dev build-essential pkg-config libglib2.0-dev libsoup-3.0-dev libwebkit2gtk-4.1-dev
+        echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig" >> $GITHUB_ENV
+
+    - uses: Swatinem/rust-cache@v2
+
+    - name: Check formatting
+      run: cargo fmt -- --check
+
+    - name: Check clippy lints
+      run: cargo clippy --all-targets --all-features -- -D warnings
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@v1
+      with:
+        toolchain: stable
+
+    - name: Install Linux dependencies
+      run: |
+        sudo apt update
+        sudo apt install -y software-properties-common
+        sudo add-apt-repository universe
+        echo "deb http://archive.ubuntu.com/ubuntu $(lsb_release -sc)-backports main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
+        sudo apt update
+        sudo apt install -y libgtk-3-dev build-essential pkg-config libglib2.0-dev libsoup-3.0-dev libwebkit2gtk-4.1-dev
+        echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig" >> $GITHUB_ENV
+
+    - uses: Swatinem/rust-cache@v2
+
+    - name: Build (all targets, all features)
+      run: cargo build --all-targets --all-features --release
+
+    - name: Run unit tests
+      run: cargo test --all-targets --all-features

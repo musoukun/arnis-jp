@@ -1,0 +1,45 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Arnis",
+  "version": "2.5.0",
+  "identifier": "com.louisdev.arnis",
+  "build": {
+    "frontendDist": "src/gui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "Arnis",
+        "width": 1000,
+        "height": 650,
+        "minWidth": 1000,
+        "minHeight": 650,
+        "resizable": true,
+        "transparent": false,
+        "center": true,
+        "theme": "Dark",
+        "additionalBrowserArgs": "--disable-features=VizDisplayCompositor"
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "assets/icons/32x32.png",
+      "assets/icons/128x128.png",
+      "assets/icons/128x128@2x.png",
+      "assets/icons/icon.icns",
+      "assets/icons/icon.ico"
+    ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "embedBootstrapper"
+      }
+    }
+  }
+}

@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <link rel="stylesheet" href="./css/styles.css" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Arnis</title>
+  <script type="module" src="./js/main.js" defer></script>
+  <script type="module" src="./js/license.js" defer></script>
+  <script type="module" src="./js/language-selector.js" defer></script>
+</head>
+
+<body>
+  <main class="container">
+    <div class="row">
+      <a href="https://arnismc.com" target="_blank">
+        <img src="./images/logo.png" id="arnis-logo" class="logo arnis" alt="Arnis Logo" style="width: 35%; height: auto;">
+      </a>
+    </div>
+
+    <div class="flex-container">
+      <!-- Left Box: Map -->
+      <section class="section map-box">
+        <iframe src="maps.html" width="100%" height="100%" class="map-container" title="Map Picker"></iframe>
+      </section>
+
+      <!-- Right Box: Directory Selection, Start Button, and Progress Bar -->
+      <section class="section controls-box">
+        <div class="controls-content">
+          <div class="controls-top">
+            <!-- World Selection Container -->
+            <div class="world-selection-container">
+              <div class="tooltip" style="width: 100%;">
+                <button type="button" id="choose-world-btn" onclick="createWorld()" class="choose-world-btn">
+                  <span id="choose_world">Create World</span>
+                  <br>
+                  <span id="selected-world" style="font-size: 0.8em; color: #fecc44; display: block; margin-top: 4px;" data-localize="no_world_selected">
+                    No world created
+                  </span>
+                </button>
+              </div>
+              <!-- World Format Toggle -->
+              <div class="format-toggle-container">
+                <button type="button" id="format-java" class="format-toggle-btn format-active" onclick="setWorldFormat('java')">
+                  Java
+                </button>
+                <button type="button" id="format-bedrock" class="format-toggle-btn" onclick="setWorldFormat('bedrock')">
+                  Bedrock
+                </button>
+              </div>
+            </div>
+            
+            <div class="button-container">
+              <button type="button" id="start-button" class="start-button" onclick="startGeneration()" data-localize="start_generation">Start Generation</button>
+              <button type="button" class="settings-button" onclick="openSettings()" aria-label="Settings">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"></path><circle cx="12" cy="12" r="3"></circle></svg>
+              </button>
+            </div>
+            <span id="bbox-selection-info" class="bbox-selection-text" data-localize="select_area_prompt">Select an area on the map using the tools.</span>
+          </div>
+
+          <div class="progress-section">
+            <span id="progress-info" class="progress-info-text"></span>
+            <div class="progress-row">
+              <div class="progress-bar-container">
+                <div class="progress-bar" id="progress-bar"></div>
+              </div>
+              <span id="progress-detail">0%</span>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Settings Modal -->
+    <div id="settings-modal" class="modal" style="display: none;">
+      <div class="modal-content">
+        <span class="close-button" onclick="closeSettings()">&times;</span>
+        <h2 data-localize="customization_settings">Customization Settings</h2>
+
+        <!-- Generation Mode Dropdown -->
+        <div class="settings-row">
+          <label for="generation-mode-select">
+            <span data-localize="generation_mode">Generation Mode</span>
+            <span class="tooltip-icon" data-tooltip="Choose what to generate: buildings/roads with terrain, just objects, or terrain only">?</span>
+          </label>
+          <div class="settings-control">
+            <select id="generation-mode-select" name="generation-mode-select" class="generation-mode-dropdown">
+              <option value="geo-terrain" data-localize="mode_geo_terrain">Objects + Terrain</option>
+              <option value="geo-only" data-localize="mode_geo_only">Objects only</option>
+              <option value="terrain-only" data-localize="mode_terrain_only">Terrain only</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Roof Toggle Button -->
+        <div class="settings-row">
+          <label for="roof-toggle">
+            <span data-localize="roof">Roof Generation</span>
+            <span class="tooltip-icon" data-tooltip="Generate roofs on buildings">?</span>
+          </label>
+          <div class="settings-control">
+            <input type="checkbox" id="roof-toggle" name="roof-toggle" checked>
+          </div>
+        </div>
+
+        <!-- Interior Toggle Button -->
+        <div class="settings-row">
+          <label for="interior-toggle">
+            <span data-localize="interior">Interior Generation</span>
+            <span class="tooltip-icon" data-tooltip="Generate interior details inside buildings">?</span>
+          </label>
+          <div class="settings-control">
+            <input type="checkbox" id="interior-toggle" name="interior-toggle">
+          </div>
+        </div>
+
+        <!-- Fill ground Toggle Button -->
+        <div class="settings-row">
+          <label for="fillground-toggle">
+            <span data-localize="fillground">Fill Ground</span>
+            <span class="tooltip-icon" data-tooltip="Fill the ground below the surface">?</span>
+          </label>
+          <div class="settings-control">
+            <input type="checkbox" id="fillground-toggle" name="fillground-toggle">
+          </div>
+        </div>
+
+        <!-- City Ground Toggle Button -->
+        <div class="settings-row">
+          <label for="city-boundaries-toggle">
+            <span data-localize="city_boundaries">City Ground</span>
+            <span class="tooltip-icon" data-tooltip="Detect urban areas and place smooth stone ground where cities are located.">?</span>
+          </label>
+          <div class="settings-control">
+            <input type="checkbox" id="city-boundaries-toggle" name="city-boundaries-toggle" checked>
+          </div>
+        </div>
+
+        <!-- World Scale Slider -->
+        <div class="settings-row">
+          <label for="scale-value-slider">
+            <span data-localize="world_scale">World Scale</span>
+            <span class="tooltip-icon" data-tooltip="Scale factor for the generated world (1.0 = real-world scale)">?</span>
+          </label>
+          <div class="settings-control">
+            <input type="range" id="scale-value-slider" name="scale-value-slider" min="0.30" max="2.5" step="0.1" value="1">
+            <span id="slider-value">1.00</span>
+          </div>
+        </div>
+
+        <!-- Bounding Box Input -->
+        <div class="settings-row">
+          <label for="bbox-coords">
+            <span data-localize="custom_bounding_box">Custom Bounding Box</span>
+            <span class="tooltip-icon" data-tooltip="Manually enter coordinates (lat,lng,lat,lng) or use map selection">?</span>
+          </label>
+          <div class="settings-control">
+            <input type="text" id="bbox-coords" name="bbox-coords" maxlength="55" placeholder="Format: lat,lng,lat,lng">
+          </div>
+        </div>
+
+        <!-- Map Theme Selector -->
+        <div class="settings-row">
+          <label for="tile-theme-select">
+            <span data-localize="map_theme">Map Theme</span>
+            <span class="tooltip-icon" data-tooltip="Visual style of the map picker">?</span>
+          </label>
+          <div class="settings-control">
+            <select id="tile-theme-select" name="tile-theme-select" class="theme-dropdown">
+              <option value="osm">Standard</option>
+              <option value="esri-imagery">Satellite</option>
+              <option value="opentopomap">Topographic</option>
+              <option value="stadia-bright">Smooth Bright</option>
+              <option value="stadia-dark">Smooth Dark</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Save Path -->
+        <div class="settings-row">
+          <label for="save-path-input">
+            <span data-localize="save_path">Save Path</span>
+            <span class="tooltip-icon" data-tooltip="Directory where new Minecraft Java worlds are created">?</span>
+          </label>
+          <div class="settings-control save-path-control">
+            <input type="text" id="save-path-input" name="save-path-input" class="save-path-input" placeholder="Minecraft saves directory">
+            <button type="button" id="save-path-browse" class="save-path-browse" title="Browse...">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2z"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Language Selector -->
+        <div class="settings-row">
+          <label for="language-select">
+            <span data-localize="language">Language</span>
+            <span class="tooltip-icon" data-tooltip="Interface language">?</span>
+          </label>
+          <div class="settings-control">
+            <select id="language-select" name="language-select" class="language-dropdown">
+              <option value="en">English</option>
+              <option value="de">Deutsch</option>
+              <option value="es">Español</option>
+              <option value="fr-FR">Français</option>
+              <option value="ru">Русский</option>
+              <option value="zh-CN">中文 (简体)</option>
+              <option value="ko">한국어</option>
+              <option value="pl">Polski</option>
+              <option value="lv">Latviešu</option>
+              <option value="sv">Svenska</option>
+              <option value="ar">العربية</option>
+              <option value="fi">Suomi</option>
+              <option value="hu">Magyar</option>
+              <option value="lt">Lietuvių</option>
+              <option value="ua">Українська</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Telemetry Consent Toggle -->
+        <div class="settings-row">
+          <label for="telemetry-toggle" style="white-space: nowrap;">
+            <span>Anonymous Crash Reports</span>
+            <span class="tooltip-icon" data-tooltip="Send anonymous crash data to help improve Arnis">?</span>
+          </label>
+          <div class="settings-control">
+            <input type="checkbox" id="telemetry-toggle" name="telemetry-toggle">
+          </div>
+        </div>
+
+        <!-- License and Credits Button -->
+        <div class="settings-row license-button-row">
+          <button type="button" id="license-button" class="license-button" onclick="openLicense()" data-localize="license_and_credits">License and Credits</button>
+        </div>
+
+        <!-- Buy Me a Coffee and Discord -->
+        <div class="settings-row buymeacoffee-row">
+          <a href="https://buymeacoffee.com/louisdev" target="_blank" class="buymeacoffee-link">
+            <img src="./images/buymeacoffee.png" alt="Buy Me a Coffee" class="buymeacoffee-logo">
+          </a>
+          <a href="https://discord.gg/mA2g69Fhxq" target="_blank" class="discord-link">
+            <img src="./images/discord.png" alt="Discord" class="discord-logo">
+          </a>
+        </div>
+      </div>
+    </div>
+
+    <!-- Telemetry Consent Modal (first run) -->
+    <div id="telemetry-modal" class="modal" style="display: none;">
+      <div class="modal-content">
+        <span class="close-button" onclick="rejectTelemetry()">&times;</span>
+        <h2>Help improve Arnis</h2>
+        <p style="text-align:left; margin-top:6px; color:#ececec;">
+          We’d like to collect anonymous usage data like crashes and performance to make Arnis more stable and faster.
+          <a href="https://arnismc.com/privacypolicy.html" style="color: inherit;" target="_blank">No personal data or world contents are collected.</a>
+        </p>
+        <div class="modal-actions" style="margin-top:14px;">
+          <button type="button" class="btn-secondary" onclick="rejectTelemetry()">No thanks</button>
+          <button type="button" class="btn-primary" onclick="acceptTelemetry()">Allow anonymous data</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- License Modal -->
+    <div id="license-modal" class="modal" style="display: none;">
+      <div class="modal-content">
+        <span class="close-button" onclick="closeLicense()">&times;</span>
+        <h2 data-localize="license_and_credits">License and Credits</h2>
+        <div id="license-content" style="overflow-y: auto; max-height: 300px; font-size: 0.85em; line-height: 1.3; padding: 10px; border: 1px solid #ccc; border-radius: 4px;">
+          Loading...
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <a href="https://github.com/louis-e/arnis" target="_blank" class="footer-link" data-localize="footer_text">
+        © {year} Arnis v{version} by louis-e
+      </a>
+    </footer>
+  </main>
+</body>
+
+</html>

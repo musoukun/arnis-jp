@@ -1,0 +1,160 @@
+name: Build and Release Arnis
+
+on:
+  release:
+    types: [created]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            binary_name: arnis.exe
+            asset_name: arnis-windows.exe
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            binary_name: arnis
+            asset_name: arnis-linux
+          - os: macos-15-intel  # Intel runner for x86_64 builds
+            target: x86_64-apple-darwin
+            binary_name: arnis
+            asset_name: arnis-mac-intel
+          - os: macos-latest  # ARM64 runner for ARM64 builds
+            target: aarch64-apple-darwin
+            binary_name: arnis
+            asset_name: arnis-mac-arm64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@v1
+      with:
+        toolchain: stable
+        targets: ${{ matrix.target }}
+
+    - name: Install Linux dependencies
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt update
+        sudo apt install -y software-properties-common
+        sudo add-apt-repository universe
+        echo "deb http://archive.ubuntu.com/ubuntu $(lsb_release -sc)-backports main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
+        sudo apt update
+        sudo apt install -y libgtk-3-dev build-essential pkg-config libglib2.0-dev libsoup-3.0-dev libwebkit2gtk-4.1-dev
+        echo "PKG_CONFIG_PATH=/usr/lib/x86_64-linux-gnu/pkgconfig" >> $GITHUB_ENV
+
+    - name: Install dependencies
+      run: cargo fetch
+
+    - name: Build
+      run: cargo build --release --target ${{ matrix.target }}
+
+    - name: Rename binary for release
+      run: mv target/${{ matrix.target }}/release/${{ matrix.binary_name }} target/release/${{ matrix.asset_name }}
+
+    - name: Install Windows SDK
+      if: matrix.os == 'windows-latest'
+      run: |
+        choco install windows-sdk-10.1 -y
+        $env:Path += ";C:\Program Files (x86)\Windows Kits\10\bin\x64"
+      shell: powershell
+
+    - name: Locate signtool.exe
+      if: matrix.os == 'windows-latest'
+      id: locate_signtool
+      run: |
+        $env:ProgramFilesX86 = [System.Environment]::GetFolderPath('ProgramFilesX86')
+        $signtoolPath = Get-ChildItem -Path "$env:ProgramFilesX86\Windows Kits\10\bin" -Recurse -Filter signtool.exe | Where-Object { $_.FullName -match '\\x64\\' } | Select-Object -First 1 -ExpandProperty FullName
+        if (-not $signtoolPath) { throw "signtool.exe not found." }
+        echo "signtool=$signtoolPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      shell: powershell
+    
+    - name: Self-sign Windows executable
+      if: matrix.os == 'windows-latest'
+      run: |
+        $password = ConvertTo-SecureString -String $env:WINDOWS_CERT_PASSWORD -Force -AsPlainText
+        $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject 'CN=Arnis' -CertStoreLocation Cert:\CurrentUser\My -NotAfter (Get-Date).AddYears(5)
+        Export-PfxCertificate -Cert $cert -FilePath arnis-cert.pfx -Password $password
+        & $env:signtool sign /f arnis-cert.pfx /p $env:WINDOWS_CERT_PASSWORD /t http://timestamp.digicert.com target/release/${{ matrix.asset_name }}
+      env:
+        WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+      shell: powershell
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v7
+      with:
+        name: ${{ matrix.os }}-${{ matrix.target }}-build
+        path: target/release/${{ matrix.asset_name }}
+
+  create-universal-macos:
+    needs: build
+    runs-on: macos-latest
+    steps:
+    - name: Download macOS Intel build
+      uses: actions/download-artifact@v8
+      with:
+        name: macos-15-intel-x86_64-apple-darwin-build
+        path: ./intel
+
+    - name: Download macOS ARM64 build
+      uses: actions/download-artifact@v8
+      with:
+        name: macos-latest-aarch64-apple-darwin-build
+        path: ./arm64
+
+    - name: Create universal binary
+      run: |
+        lipo -create -output arnis-mac-universal ./intel/arnis-mac-intel ./arm64/arnis-mac-arm64
+        chmod +x arnis-mac-universal
+
+    - name: Upload universal binary
+      uses: actions/upload-artifact@v7
+      with:
+        name: macos-universal-build
+        path: arnis-mac-universal
+
+  release:
+    needs: [build, create-universal-macos]
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Download Windows build artifact
+      uses: actions/download-artifact@v8
+      with:
+        name: windows-latest-x86_64-pc-windows-msvc-build
+        path: ./builds/windows
+
+    - name: Download Linux build artifact
+      uses: actions/download-artifact@v8
+      with:
+        name: ubuntu-latest-x86_64-unknown-linux-gnu-build
+        path: ./builds/linux
+
+    - name: Download macOS universal build artifact
+      uses: actions/download-artifact@v8
+      with:
+        name: macos-universal-build
+        path: ./builds/macos
+
+    - name: Make Linux and macOS binaries executable
+      run: |
+        chmod +x ./builds/linux/arnis-linux
+        chmod +x ./builds/macos/arnis-mac-universal
+
+    - name: Create GitHub Release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: |
+          builds/windows/arnis-windows.exe
+          builds/linux/arnis-linux
+          builds/macos/arnis-mac-universal
+      env:
+        GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
