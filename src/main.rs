@@ -5,6 +5,7 @@ mod args;
 mod bedrock_block_map;
 mod block_definitions;
 mod bresenham;
+mod building_metadata;
 mod clipping;
 mod colors;
 mod coordinate_system;
@@ -15,6 +16,7 @@ mod elevation_data;
 mod floodfill;
 mod floodfill_cache;
 mod ground;
+mod gsi_data;
 mod map_renderer;
 mod map_transformation;
 mod osm_parser;
@@ -27,7 +29,9 @@ mod telemetry;
 mod test_utilities;
 mod urban_ground;
 mod version_check;
+mod satellite_colors;
 mod world_editor;
+mod world_mapping;
 mod world_utils;
 
 use args::Args;
@@ -142,7 +146,7 @@ fn run_cli() {
     };
 
     // Fetch data
-    let raw_data = match &args.file {
+    let mut raw_data = match &args.file {
         Some(file) => retrieve_data::fetch_data_from_file(file),
         None => retrieve_data::fetch_data_from_overpass(
             args.bbox,
@@ -153,10 +157,30 @@ fn run_cli() {
     }
     .expect("Failed to fetch data");
 
+    // Merge GSI building data if --gsi flag is set
+    if args.gsi {
+        println!(
+            "{} Fetching GSI building data...",
+            "[GSI]".bright_white().bold()
+        );
+        match gsi_data::fetch_gsi_buildings(args.bbox) {
+            Ok(gsi_data) => {
+                raw_data.merge(gsi_data);
+            }
+            Err(e) => {
+                eprintln!(
+                    "{} Failed to fetch GSI data: {}",
+                    "Warning:".yellow().bold(),
+                    e
+                );
+            }
+        }
+    }
+
     let mut ground = ground::generate_ground_data(&args);
 
     // Parse raw data
-    let (mut parsed_elements, mut xzbbox) =
+    let (mut parsed_elements, mut xzbbox, coord_transformer) =
         osm_parser::parse_osm_data(raw_data, args.bbox, args.scale, args.debug);
     parsed_elements
         .sort_by_key(|element: &osm_parser::ProcessedElement| osm_parser::get_priority(element));
@@ -175,6 +199,24 @@ fn run_cli() {
                 element.tags(),
             )
             .expect("Failed to write to output file");
+        }
+    }
+
+    // Apply satellite-based building colors
+    if args.satellite {
+        match satellite_colors::apply_satellite_colors(
+            &mut parsed_elements,
+            &xzbbox,
+            &args.bbox,
+        ) {
+            Ok(count) => println!(
+                "Applied satellite colors to {count} buildings"
+            ),
+            Err(e) => eprintln!(
+                "{} Failed to apply satellite colors: {}",
+                "Warning:".yellow().bold(),
+                e
+            ),
         }
     }
 
@@ -214,6 +256,13 @@ fn run_cli() {
         format: world_format,
         level_name,
         spawn_point,
+        scale: args.scale,
+        scale_factor_x: coord_transformer.scale_factor_x(),
+        scale_factor_z: coord_transformer.scale_factor_z(),
+        min_lat: coord_transformer.min_lat(),
+        min_lng: coord_transformer.min_lng(),
+        len_lat: coord_transformer.len_lat(),
+        len_lng: coord_transformer.len_lng(),
     };
 
     // Generate world

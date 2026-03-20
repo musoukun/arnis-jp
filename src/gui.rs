@@ -704,6 +704,8 @@ fn gui_start_generation(
     roof_enabled: bool,
     fillground_enabled: bool,
     city_boundaries_enabled: bool,
+    satellite_colors: bool,
+    gsi_enabled: bool,
     is_new_world: bool,
     spawn_point: Option<(f64, f64)>,
     telemetry_consent: bool,
@@ -868,12 +870,25 @@ fn gui_start_generation(
                 }
             };
 
+            // Get coordinate transformer for world mapping
+            let (gui_coord_transformer, _) = CoordTransformer::llbbox_to_xzbbox(&bbox, world_scale)
+                .unwrap_or_else(|e| {
+                    panic!("Failed to create coord transformer: {e}");
+                });
+
             // Create generation options
             let generation_options = GenerationOptions {
                 path: generation_path.clone(),
                 format: world_format,
                 level_name,
                 spawn_point: mc_spawn_point,
+                scale: world_scale,
+                scale_factor_x: gui_coord_transformer.scale_factor_x(),
+                scale_factor_z: gui_coord_transformer.scale_factor_z(),
+                min_lat: gui_coord_transformer.min_lat(),
+                min_lng: gui_coord_transformer.min_lng(),
+                len_lat: gui_coord_transformer.len_lat(),
+                len_lng: gui_coord_transformer.len_lng(),
             };
 
             // Create an Args instance with the chosen bounding box
@@ -896,6 +911,8 @@ fn gui_start_generation(
                 roof: roof_enabled,
                 fillground: fillground_enabled,
                 city_boundaries: city_boundaries_enabled,
+                satellite: satellite_colors,
+                gsi: gsi_enabled,
                 debug: false,
                 timeout: Some(std::time::Duration::from_secs(40)),
                 spawn_lat: None,
@@ -941,8 +958,20 @@ fn gui_start_generation(
 
             // Run data fetch and world generation (standard mode: objects + terrain, or objects only)
             match retrieve_data::fetch_data_from_overpass(args.bbox, args.debug, "requests", None) {
-                Ok(raw_data) => {
-                    let (mut parsed_elements, mut xzbbox) =
+                Ok(mut raw_data) => {
+                    // Merge GSI building data if enabled
+                    if args.gsi {
+                        match crate::gsi_data::fetch_gsi_buildings(args.bbox) {
+                            Ok(gsi_data) => {
+                                raw_data.merge(gsi_data);
+                            }
+                            Err(e) => {
+                                eprintln!("Warning: Failed to fetch GSI data: {e}");
+                            }
+                        }
+                    }
+
+                    let (mut parsed_elements, mut xzbbox, _gui_transformer) =
                         osm_parser::parse_osm_data(raw_data, args.bbox, args.scale, args.debug);
                     parsed_elements.sort_by(|el1, el2| {
                         let (el1_priority, el2_priority) =
@@ -956,6 +985,22 @@ fn gui_start_generation(
                             _ => el1_priority.cmp(&el2_priority),
                         }
                     });
+
+                    // Apply satellite colors if enabled
+                    if args.satellite {
+                        match crate::satellite_colors::apply_satellite_colors(
+                            &mut parsed_elements,
+                            &xzbbox,
+                            &args.bbox,
+                        ) {
+                            Ok(count) => println!(
+                                "Applied satellite colors to {count} buildings"
+                            ),
+                            Err(e) => eprintln!(
+                                "Warning: Failed to apply satellite colors: {e}"
+                            ),
+                        }
+                    }
 
                     let mut ground = ground::generate_ground_data(&args);
 

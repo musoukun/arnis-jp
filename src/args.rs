@@ -40,6 +40,12 @@ pub struct Args {
     #[arg(long, default_value_t = -62)]
     pub ground_level: i32,
 
+    /// Enable satellite-based building color extraction (optional)
+    /// Downloads satellite tiles for the bbox and determines building wall colors
+    /// by sampling the satellite image at each building's footprint.
+    #[arg(long)]
+    pub satellite: bool,
+
     /// Enable terrain (optional)
     #[arg(long)]
     pub terrain: bool,
@@ -61,6 +67,12 @@ pub struct Args {
     /// Isolated buildings in rural areas will keep grass around them.
     #[arg(long, default_value_t = true, action = ArgAction::Set, num_args = 0..=1, default_missing_value = "true")]
     pub city_boundaries: bool,
+
+    /// Enable GSI (国土地理院) building data for Japan (optional)
+    /// Downloads building polygons from GSI vector tiles and merges with OSM data.
+    /// Tiles are cached locally for offline reuse.
+    #[arg(long)]
+    pub gsi: bool,
 
     /// Enable debug mode (optional)
     #[arg(long)]

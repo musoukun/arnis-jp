@@ -881,6 +881,8 @@ async function startGeneration() {
     var roof = document.getElementById("roof-toggle").checked;
     var fill_ground = document.getElementById("fillground-toggle").checked;
     var city_boundaries = document.getElementById("city-boundaries-toggle").checked;
+    var satellite_colors = document.getElementById("satellite-toggle").checked;
+    var gsi_enabled = document.getElementById("gsi-toggle").checked;
     var scale = parseFloat(document.getElementById("scale-value-slider").value);
     // var ground_level = parseInt(document.getElementById("ground-level").value, 10);
     // DEPRECATED: Ground level input removed from UI
@@ -904,6 +906,8 @@ async function startGeneration() {
         roofEnabled: roof,
         fillgroundEnabled: fill_ground,
         cityBoundariesEnabled: city_boundaries,
+        satelliteColors: satellite_colors,
+        gsiEnabled: gsi_enabled,
         isNewWorld: true,
         spawnPoint: spawnPoint,
         telemetryConsent: telemetryConsent || false,
