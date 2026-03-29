@@ -11,14 +11,14 @@ use std::sync::Arc;
 // Raw data from OSM
 
 #[derive(Debug, Deserialize)]
-struct OsmMember {
+pub struct OsmMember {
     r#type: String,
     r#ref: u64,
     r#role: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct OsmElement {
+pub struct OsmElement {
     pub r#type: String,
     pub id: u64,
     pub lat: Option<f64>,
@@ -31,7 +31,7 @@ struct OsmElement {
 
 #[derive(Debug, Deserialize)]
 pub struct OsmData {
-    elements: Vec<OsmElement>,
+    pub elements: Vec<OsmElement>,
     #[serde(default)]
     pub remark: Option<String>,
 }
@@ -40,6 +40,19 @@ impl OsmData {
     /// Returns true if there are no elements in the OSM data
     pub fn is_empty(&self) -> bool {
         self.elements.is_empty()
+    }
+
+    /// Create OsmData from a vector of elements
+    pub fn from_elements(elements: Vec<OsmElement>) -> Self {
+        Self {
+            elements,
+            remark: None,
+        }
+    }
+
+    /// Merge another OsmData into this one
+    pub fn merge(&mut self, other: OsmData) {
+        self.elements.extend(other.elements);
     }
 }
 

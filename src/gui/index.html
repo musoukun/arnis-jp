@@ -83,7 +83,7 @@
         <div class="settings-row">
           <label for="generation-mode-select">
             <span data-localize="generation_mode">Generation Mode</span>
-            <span class="tooltip-icon" data-tooltip="Choose what to generate: buildings/roads with terrain, just objects, or terrain only">?</span>
+            <span class="tooltip-icon" data-tooltip="Choose what to generate: buildings/roads with terrain, just objects, or terrain only" data-tooltip-key="tooltip_generation_mode">?</span>
           </label>
           <div class="settings-control">
             <select id="generation-mode-select" name="generation-mode-select" class="generation-mode-dropdown">
@@ -98,7 +98,7 @@
         <div class="settings-row">
           <label for="roof-toggle">
             <span data-localize="roof">Roof Generation</span>
-            <span class="tooltip-icon" data-tooltip="Generate roofs on buildings">?</span>
+            <span class="tooltip-icon" data-tooltip="Generate roofs on buildings" data-tooltip-key="tooltip_roof">?</span>
           </label>
           <div class="settings-control">
             <input type="checkbox" id="roof-toggle" name="roof-toggle" checked>
@@ -109,7 +109,7 @@
         <div class="settings-row">
           <label for="interior-toggle">
             <span data-localize="interior">Interior Generation</span>
-            <span class="tooltip-icon" data-tooltip="Generate interior details inside buildings (experimental)">?</span>
+            <span class="tooltip-icon" data-tooltip="Generate interior details inside buildings (experimental)" data-tooltip-key="tooltip_interior">?</span>
           </label>
           <div class="settings-control">
             <input type="checkbox" id="interior-toggle" name="interior-toggle">
@@ -120,7 +120,7 @@
         <div class="settings-row">
           <label for="fillground-toggle">
             <span data-localize="fillground">Fill Ground</span>
-            <span class="tooltip-icon" data-tooltip="Fill the ground below the surface">?</span>
+            <span class="tooltip-icon" data-tooltip="Fill the ground below the surface" data-tooltip-key="tooltip_fillground">?</span>
           </label>
           <div class="settings-control">
             <input type="checkbox" id="fillground-toggle" name="fillground-toggle">
@@ -131,10 +131,32 @@
         <div class="settings-row">
           <label for="land-cover-toggle">
             <span data-localize="land_cover">Land Cover</span>
-            <span class="tooltip-icon" data-tooltip="Fetch satellite land cover data to classify terrain type. Requires terrain to be enabled.">?</span>
+            <span class="tooltip-icon" data-tooltip="Fetch satellite land cover data to classify terrain type. Requires terrain to be enabled." data-tooltip-key="tooltip_land_cover">?</span>
           </label>
           <div class="settings-control">
             <input type="checkbox" id="land-cover-toggle" name="land-cover-toggle" checked>
+          </div>
+        </div>
+
+        <!-- Satellite Color Toggle Button -->
+        <div class="settings-row">
+          <label for="satellite-toggle">
+            <span data-localize="satellite_colors">Satellite Colors</span>
+            <span class="tooltip-icon" data-tooltip="Determine building colors from satellite imagery instead of random presets. May not work correctly in some cases." data-tooltip-key="tooltip_satellite_colors">?</span>
+          </label>
+          <div class="settings-control">
+            <input type="checkbox" id="satellite-toggle" name="satellite-toggle">
+          </div>
+        </div>
+
+        <!-- GSI Building Data Toggle Button -->
+        <div class="settings-row">
+          <label for="gsi-toggle">
+            <span data-localize="gsi_buildings">GSI Buildings (Japan)</span>
+            <span class="tooltip-icon" data-tooltip="Use building data from Japan's Geospatial Information Authority (国土地理院). Provides much more building coverage for Japan than OSM alone." data-tooltip-key="tooltip_gsi_buildings">?</span>
+          </label>
+          <div class="settings-control">
+            <input type="checkbox" id="gsi-toggle" name="gsi-toggle">
           </div>
         </div>
 

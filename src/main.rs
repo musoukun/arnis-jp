@@ -16,6 +16,7 @@ mod floodfill;
 mod floodfill_cache;
 mod ground;
 mod ground_generation;
+mod gsi_data;
 mod land_cover;
 mod map_renderer;
 mod map_transformation;
@@ -23,6 +24,7 @@ mod osm_parser;
 #[cfg(feature = "gui")]
 mod progress;
 mod retrieve_data;
+mod satellite_colors;
 #[cfg(feature = "gui")]
 mod telemetry;
 #[cfg(test)]

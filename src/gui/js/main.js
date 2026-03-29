@@ -115,6 +115,8 @@ async function applyLocalization(localization) {
     "span[data-localize='roof']": "roof",
     "span[data-localize='fillground']": "fillground",
     "span[data-localize='land_cover']": "land_cover",
+    "span[data-localize='satellite_colors']": "satellite_colors",
+    "span[data-localize='gsi_buildings']": "gsi_buildings",
     "span[data-localize='map_theme']": "map_theme",
     "span[data-localize='save_path']": "save_path",
     ".footer-link": "footer_text",
@@ -137,6 +139,14 @@ async function applyLocalization(localization) {
     localizeElement(localization, { element: bboxSelectionInfo }, currentBboxSelectionKey);
     bboxSelectionInfo.style.color = currentBboxSelectionColor;
   }
+
+  // Translate tooltips with data-tooltip-key
+  document.querySelectorAll('[data-tooltip-key]').forEach(el => {
+    const key = el.getAttribute('data-tooltip-key');
+    if (localization && localization[key]) {
+      el.setAttribute('data-tooltip', localization[key]);
+    }
+  });
 
   // Update error messages
   window.localization = localization;
@@ -177,7 +187,7 @@ async function checkForUpdates() {
     if (isUpdateAvailable) {
       const footer = document.querySelector(".footer");
       const updateMessage = document.createElement("a");
-      updateMessage.href = "https://github.com/louis-e/arnis/releases";
+      updateMessage.href = "https://github.com/musoukun/arnis-jp/releases";
       updateMessage.target = "_blank";
       updateMessage.style.color = "#fecc44";
       updateMessage.style.marginTop = "-5px";
@@ -880,6 +890,8 @@ async function startGeneration() {
     var roof = document.getElementById("roof-toggle").checked;
     var fill_ground = document.getElementById("fillground-toggle").checked;
     var land_cover = document.getElementById("land-cover-toggle").checked;
+    var satellite_colors = document.getElementById("satellite-toggle").checked;
+    var gsi_enabled = document.getElementById("gsi-toggle").checked;
     var scale = parseFloat(document.getElementById("scale-value-slider").value);
     // var ground_level = parseInt(document.getElementById("ground-level").value, 10);
     // DEPRECATED: Ground level input removed from UI
@@ -903,6 +915,8 @@ async function startGeneration() {
         roofEnabled: roof,
         fillgroundEnabled: fill_ground,
         landCoverEnabled: land_cover,
+        satelliteColors: satellite_colors,
+        gsiEnabled: gsi_enabled,
         isNewWorld: true,
         spawnPoint: spawnPoint,
         telemetryConsent: telemetryConsent || false,

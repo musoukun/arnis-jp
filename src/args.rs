@@ -44,6 +44,17 @@ pub struct Args {
     #[arg(long)]
     pub terrain: bool,
 
+    /// Enable satellite-based building color extraction (optional)
+    /// Downloads satellite tiles for the bbox and determines building wall colors
+    /// by sampling the satellite image at each building's footprint.
+    #[arg(long)]
+    pub satellite: bool,
+
+    /// Enable GSI (国土地理院) building data for Japan (optional)
+    /// Downloads building polygons from GSI vector tiles and merges with OSM data.
+    #[arg(long, default_value_t = false)]
+    pub gsi: bool,
+
     /// Enable interior generation (optional)
     #[arg(long, default_value_t = true, action = ArgAction::Set, num_args = 0..=1, default_missing_value = "true")]
     pub interior: bool,

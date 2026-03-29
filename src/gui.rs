@@ -706,6 +706,8 @@ fn gui_start_generation(
     roof_enabled: bool,
     fillground_enabled: bool,
     land_cover_enabled: bool, // renamed from city_boundaries_enabled
+    satellite_colors: bool,
+    gsi_enabled: bool,
     is_new_world: bool,
     spawn_point: Option<(f64, f64)>,
     telemetry_consent: bool,
@@ -894,6 +896,8 @@ fn gui_start_generation(
                 scale: world_scale,
                 ground_level,
                 terrain: terrain_enabled,
+                satellite: satellite_colors,
+                gsi: gsi_enabled,
                 interior: interior_enabled,
                 roof: roof_enabled,
                 fillground: fillground_enabled,
@@ -943,7 +947,19 @@ fn gui_start_generation(
 
             // Run data fetch and world generation (standard mode: objects + terrain, or objects only)
             match retrieve_data::fetch_data_from_overpass(args.bbox, args.debug, "requests", None) {
-                Ok(raw_data) => {
+                Ok(mut raw_data) => {
+                    // Merge GSI building data if enabled
+                    if args.gsi {
+                        match crate::gsi_data::fetch_gsi_buildings(args.bbox) {
+                            Ok(gsi_data) => {
+                                raw_data.merge(gsi_data);
+                            }
+                            Err(e) => {
+                                eprintln!("Warning: Failed to fetch GSI data: {e}");
+                            }
+                        }
+                    }
+
                     let (mut parsed_elements, mut xzbbox) =
                         osm_parser::parse_osm_data(raw_data, args.bbox, args.scale, args.debug);
                     parsed_elements.sort_by(|el1, el2| {
@@ -958,6 +974,22 @@ fn gui_start_generation(
                             _ => el1_priority.cmp(&el2_priority),
                         }
                     });
+
+                    // Apply satellite colors if enabled
+                    if args.satellite {
+                        match crate::satellite_colors::apply_satellite_colors(
+                            &mut parsed_elements,
+                            &xzbbox,
+                            &args.bbox,
+                        ) {
+                            Ok(count) => println!(
+                                "Applied satellite colors to {count} buildings"
+                            ),
+                            Err(e) => eprintln!(
+                                "Warning: Failed to apply satellite colors: {e}"
+                            ),
+                        }
+                    }
 
                     let mut ground = ground::generate_ground_data(&args);
 
