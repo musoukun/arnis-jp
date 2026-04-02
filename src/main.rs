@@ -145,7 +145,7 @@ fn run_cli() {
     };
 
     // Fetch data
-    let raw_data = match &args.file {
+    let mut raw_data = match &args.file {
         Some(file) => retrieve_data::fetch_data_from_file(file),
         None => retrieve_data::fetch_data_from_overpass(
             args.bbox,
@@ -155,6 +155,26 @@ fn run_cli() {
         ),
     }
     .expect("Failed to fetch data");
+
+    // Merge GSI building data if --gsi flag is set
+    if args.gsi {
+        println!(
+            "{} Fetching GSI building data...",
+            "[GSI]".bright_white().bold()
+        );
+        match gsi_data::fetch_gsi_buildings(args.bbox) {
+            Ok(gsi_data) => {
+                raw_data.merge(gsi_data);
+            }
+            Err(e) => {
+                eprintln!(
+                    "{} Failed to fetch GSI data: {}",
+                    "Warning:".yellow().bold(),
+                    e
+                );
+            }
+        }
+    }
 
     let mut ground = ground::generate_ground_data(&args);
 

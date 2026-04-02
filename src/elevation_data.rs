@@ -13,12 +13,17 @@ const MAX_Y: i32 = 319;
 /// AWS S3 Terrarium tiles endpoint (no API key required)
 const AWS_TERRARIUM_URL: &str =
     "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png";
+/// GSI (国土地理院) DEM PNG tiles endpoint (no API key required, Japan only)
+const GSI_DEM_URL: &str =
+    "https://cyberjapandata.gsi.go.jp/xyz/dem_png/{z}/{x}/{y}.png";
 /// Terrarium format offset for height decoding
 const TERRARIUM_OFFSET: f64 = 32768.0;
 /// Minimum zoom level for terrain tiles
 const MIN_ZOOM: u8 = 10;
 /// Maximum zoom level for terrain tiles
 const MAX_ZOOM: u8 = 15;
+/// Maximum zoom level for GSI DEM tiles
+const GSI_MAX_ZOOM: u8 = 14;
 /// Maximum concurrent tile downloads to be respectful to AWS
 const MAX_CONCURRENT_DOWNLOADS: usize = 8;
 /// Maximum age for cached tiles in days before they are cleaned up
@@ -37,8 +42,8 @@ pub struct ElevationData {
     pub(crate) height: usize,
 }
 
-/// RGB image buffer type for elevation tiles
-type TileImage = image::ImageBuffer<Rgb<u8>, Vec<u8>>;
+/// RGBA image buffer type for elevation tiles (alpha used to detect no-data in GSI DEM)
+type TileImage = image::ImageBuffer<image::Rgba<u8>, Vec<u8>>;
 /// Result type for tile download operations: ((tile_x, tile_y), image) or error
 type TileDownloadResult = Result<((u32, u32), TileImage), String>;
 
@@ -159,16 +164,22 @@ const TILE_DOWNLOAD_MAX_RETRIES: u32 = 3;
 /// Base delay in milliseconds for exponential backoff between retries
 const TILE_DOWNLOAD_RETRY_BASE_DELAY_MS: u64 = 500;
 
-/// Downloads a tile from AWS Terrain Tiles service with retry logic
+/// Downloads a tile from AWS Terrain Tiles or GSI DEM with retry logic
 fn download_tile(
     client: &reqwest::blocking::Client,
     tile_x: u32,
     tile_y: u32,
     zoom: u8,
     tile_path: &Path,
-) -> Result<image::ImageBuffer<Rgb<u8>, Vec<u8>>, String> {
-    println!("Fetching tile x={tile_x},y={tile_y},z={zoom} from AWS Terrain Tiles");
-    let url: String = AWS_TERRARIUM_URL
+    use_gsi: bool,
+) -> Result<TileImage, String> {
+    let (source_name, url_template) = if use_gsi {
+        ("GSI DEM", GSI_DEM_URL)
+    } else {
+        ("AWS Terrain Tiles", AWS_TERRARIUM_URL)
+    };
+    println!("Fetching tile x={tile_x},y={tile_y},z={zoom} from {source_name}");
+    let url: String = url_template
         .replace("{z}", &zoom.to_string())
         .replace("{x}", &tile_x.to_string())
         .replace("{y}", &tile_y.to_string());
@@ -216,14 +227,14 @@ fn download_tile_once(
     client: &reqwest::blocking::Client,
     url: &str,
     tile_path: &Path,
-) -> Result<image::ImageBuffer<Rgb<u8>, Vec<u8>>, String> {
+) -> Result<TileImage, String> {
     let response = client.get(url).send().map_err(|e| e.to_string())?;
     response.error_for_status_ref().map_err(|e| e.to_string())?;
     let bytes = response.bytes().map_err(|e| e.to_string())?;
     // Validate the image BEFORE writing to cache to prevent caching invalid data
     let img = image::load_from_memory(&bytes).map_err(|e| e.to_string())?;
     std::fs::write(tile_path, &bytes).map_err(|e| e.to_string())?;
-    Ok(img.to_rgb8())
+    Ok(img.to_rgba8())
 }
 
 /// Fetches a tile from cache or downloads it if not available
@@ -236,7 +247,8 @@ fn fetch_or_load_tile(
     tile_y: u32,
     zoom: u8,
     tile_path: &Path,
-) -> Result<image::ImageBuffer<Rgb<u8>, Vec<u8>>, String> {
+    use_gsi: bool,
+) -> Result<TileImage, String> {
     if tile_path.exists() {
         // Check file size first — valid Terrarium tiles are ~50-100KB.
         // Files under 1000 bytes are almost certainly truncated (e.g. from a
@@ -248,7 +260,7 @@ fn fetch_or_load_tile(
                 tile_path.display(),
             );
             let _ = std::fs::remove_file(tile_path);
-            return download_tile(client, tile_x, tile_y, zoom, tile_path);
+            return download_tile(client, tile_x, tile_y, zoom, tile_path, use_gsi);
         }
 
         // Try to load cached tile, but handle corruption gracefully
@@ -258,7 +270,7 @@ fn fetch_or_load_tile(
                     "Loading cached tile x={tile_x},y={tile_y},z={zoom} from {}",
                     tile_path.display()
                 );
-                Ok(img.to_rgb8())
+                Ok(img.to_rgba8())
             }
             Err(e) => {
                 eprintln!(
@@ -283,12 +295,12 @@ fn fetch_or_load_tile(
                 }
 
                 // Re-download the tile
-                download_tile(client, tile_x, tile_y, zoom, tile_path)
+                download_tile(client, tile_x, tile_y, zoom, tile_path, use_gsi)
             }
         }
     } else {
         // Download the tile for the first time
-        download_tile(client, tile_x, tile_y, zoom, tile_path)
+        download_tile(client, tile_x, tile_y, zoom, tile_path, use_gsi)
     }
 }
 
@@ -296,6 +308,7 @@ pub fn fetch_elevation_data(
     bbox: &LLBBox,
     scale: f64,
     ground_level: i32,
+    use_gsi: bool,
 ) -> Result<ElevationData, Box<dyn std::error::Error>> {
     let (base_scale_z, base_scale_x) = geo_distance(bbox.min(), bbox.max());
 
@@ -303,9 +316,14 @@ pub fn fetch_elevation_data(
     let scale_factor_z: f64 = base_scale_z.floor() * scale;
     let scale_factor_x: f64 = base_scale_x.floor() * scale;
 
-    // Calculate zoom and tiles
-    let zoom: u8 = calculate_zoom_level(bbox);
+    // Calculate zoom and tiles (GSI DEM max zoom is 14)
+    let max_zoom = if use_gsi { GSI_MAX_ZOOM } else { MAX_ZOOM };
+    let zoom: u8 = calculate_zoom_level(bbox).min(max_zoom);
     let tiles: Vec<(u32, u32)> = get_tile_coordinates(bbox, zoom);
+
+    if use_gsi {
+        println!("Using GSI DEM elevation data (国土地理院 標高タイル)");
+    }
 
     // Match grid dimensions with Minecraft world size
     let grid_width: usize = scale_factor_x as usize;
@@ -325,10 +343,11 @@ pub fn fetch_elevation_data(
         .user_agent(concat!("arnis/", env!("CARGO_PKG_VERSION")))
         .build()?;
 
-    // Download tiles in parallel with limited concurrency to be respectful to AWS
+    // Download tiles in parallel with limited concurrency
     let num_tiles = tiles.len();
+    let source_name = if use_gsi { "GSI DEM" } else { "AWS" };
     println!(
-        "Downloading {num_tiles} elevation tiles (up to {MAX_CONCURRENT_DOWNLOADS} concurrent)..."
+        "Downloading {num_tiles} {source_name} elevation tiles (up to {MAX_CONCURRENT_DOWNLOADS} concurrent)..."
     );
 
     // Use a custom thread pool to limit concurrent downloads
@@ -341,10 +360,12 @@ pub fn fetch_elevation_data(
         tiles
             .par_iter()
             .map(|(tile_x, tile_y)| {
-                let tile_path = tile_cache_dir.join(format!("z{zoom}_x{tile_x}_y{tile_y}.png"));
+                // Use different cache prefix for GSI vs Terrarium tiles
+                let cache_prefix = if use_gsi { "gsi" } else { "z" };
+                let tile_path = tile_cache_dir.join(format!("{cache_prefix}{zoom}_x{tile_x}_y{tile_y}.png"));
 
-                let rgb_img = fetch_or_load_tile(&client, *tile_x, *tile_y, zoom, &tile_path)?;
-                Ok(((*tile_x, *tile_y), rgb_img))
+                let rgba_img = fetch_or_load_tile(&client, *tile_x, *tile_y, zoom, &tile_path, use_gsi)?;
+                Ok(((*tile_x, *tile_y), rgba_img))
             })
             .collect()
     });
@@ -364,10 +385,15 @@ pub fn fetch_elevation_data(
     emit_gui_progress_update(15.0, "Processing elevation...");
 
     // Process tiles sequentially (writes to shared height_grid)
-    for ((tile_x, tile_y), rgb_img) in successful_tiles {
+    for ((tile_x, tile_y), rgba_img) in successful_tiles {
         // Only process pixels that fall within the requested bbox
-        for (y, row) in rgb_img.rows().enumerate() {
+        for (y, row) in rgba_img.rows().enumerate() {
             for (x, pixel) in row.enumerate() {
+                // GSI DEM: skip no-data pixels (alpha == 0)
+                if use_gsi && pixel[3] == 0 {
+                    continue;
+                }
+
                 // Convert tile pixel coordinates back to geographic coordinates
                 let pixel_lng = ((tile_x as f64 + x as f64 / 256.0) / (2.0_f64.powi(zoom as i32)))
                     * 360.0
@@ -398,10 +424,17 @@ pub fn fetch_elevation_data(
                     continue;
                 }
 
-                // Decode Terrarium format: (R * 256 + G + B/256) - 32768
-                let height: f64 =
+                // Decode height based on tile source
+                let height: f64 = if use_gsi {
+                    // GSI DEM PNG: 24bit signed integer, height = value * 0.01
+                    let raw = pixel[0] as i64 * 65536 + pixel[1] as i64 * 256 + pixel[2] as i64;
+                    let signed = if raw >= 8388608 { raw - 16777216 } else { raw };
+                    signed as f64 * 0.01
+                } else {
+                    // Terrarium format: (R * 256 + G + B/256) - 32768
                     (pixel[0] as f64 * 256.0 + pixel[1] as f64 + pixel[2] as f64 / 256.0)
-                        - TERRARIUM_OFFSET;
+                        - TERRARIUM_OFFSET
+                };
 
                 // Track extreme values for debugging
                 if !(-1000.0..=10000.0).contains(&height) {

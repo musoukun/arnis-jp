@@ -32,8 +32,9 @@ impl Ground {
         scale: f64,
         ground_level: i32,
         fetch_land_cover: bool,
+        use_gsi: bool,
     ) -> Self {
-        match fetch_elevation_data(bbox, scale, ground_level) {
+        match fetch_elevation_data(bbox, scale, ground_level, use_gsi) {
             Ok(elevation_data) => {
                 // Fetch land cover data with the same grid dimensions as elevation
                 let land_cover = if fetch_land_cover {
@@ -240,7 +241,7 @@ pub fn generate_ground_data(args: &Args) -> Ground {
         println!("{} Fetching elevation...", "[3/7]".bold());
         emit_gui_progress_update(14.0, "Fetching elevation...");
         let ground =
-            Ground::new_enabled(&args.bbox, args.scale, args.ground_level, args.land_cover);
+            Ground::new_enabled(&args.bbox, args.scale, args.ground_level, args.land_cover, args.gsi);
         if args.debug {
             ground.save_debug_image("elevation_debug");
         }
