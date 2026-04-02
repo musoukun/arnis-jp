@@ -710,6 +710,7 @@ fn gui_start_generation(
     land_cover_enabled: bool, // renamed from city_boundaries_enabled
     satellite_colors: bool,
     gsi_enabled: bool,
+    plateau_enabled: bool,
     is_new_world: bool,
     spawn_point: Option<(f64, f64)>,
     telemetry_consent: bool,
@@ -910,8 +911,8 @@ fn gui_start_generation(
                 terrain: terrain_enabled,
                 satellite: satellite_colors,
                 gsi: gsi_enabled,
-                gsi_3d: None, // TODO: Add GUI file picker for GSI 3D GML
-                plateau: false, // TODO: Add GUI checkbox for PLATEAU
+                gsi_3d: None, // GSI 3D requires external GML file — CLI only (--gsi-3d)
+                plateau: plateau_enabled,
                 interior: interior_enabled,
                 roof: roof_enabled,
                 fillground: fillground_enabled,

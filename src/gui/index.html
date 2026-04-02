@@ -141,25 +141,55 @@
           </div>
         </div>
 
-        <!-- Satellite Color Toggle Button -->
-        <div class="settings-row">
-          <label for="satellite-toggle">
-            <span data-localize="satellite_colors">Satellite Colors</span>
-            <span class="tooltip-icon" data-tooltip="Determine building colors from satellite imagery instead of random presets. May not work correctly in some cases." data-tooltip-key="tooltip_satellite_colors">?</span>
-          </label>
-          <div class="settings-control">
-            <input type="checkbox" id="satellite-toggle" name="satellite-toggle">
-          </div>
-        </div>
-
-        <!-- GSI Building Data Toggle Button -->
-        <div class="settings-row">
-          <label for="gsi-toggle">
-            <span data-localize="gsi_buildings">GSI Buildings (Japan)</span>
-            <span class="tooltip-icon" data-tooltip="Use building data from Japan's Geospatial Information Authority (国土地理院). Provides much more building coverage for Japan than OSM alone." data-tooltip-key="tooltip_gsi_buildings">?</span>
-          </label>
-          <div class="settings-control">
-            <input type="checkbox" id="gsi-toggle" name="gsi-toggle">
+        <!-- Japan Extensions (collapsible) -->
+        <div class="jp-extensions-section">
+          <button type="button" class="jp-extensions-toggle" onclick="toggleJpExtensions()">
+            <span class="jp-extensions-arrow" id="jp-extensions-arrow">&#9654;</span>
+            <span data-localize="jp_extensions">Japan Extensions</span>
+          </button>
+          <div class="jp-extensions-content" id="jp-extensions-content" style="display: none;">
+            <!-- GSI Building Data -->
+            <div class="settings-row">
+              <label for="gsi-toggle">
+                <span data-localize="gsi_buildings">GSI Buildings (Japan)</span>
+                <span class="tooltip-icon" data-tooltip="Use building data from Japan's Geospatial Information Authority (国土地理院). Provides much more building coverage for Japan than OSM alone." data-tooltip-key="tooltip_gsi_buildings">?</span>
+              </label>
+              <div class="settings-control">
+                <input type="checkbox" id="gsi-toggle" name="gsi-toggle">
+              </div>
+            </div>
+            <!-- Satellite Colors -->
+            <div class="settings-row">
+              <label for="satellite-toggle">
+                <span data-localize="satellite_colors">Satellite Colors</span>
+                <span class="tooltip-icon" data-tooltip="Determine building colors from satellite imagery instead of random presets. May not work correctly in some cases." data-tooltip-key="tooltip_satellite_colors">?</span>
+              </label>
+              <div class="settings-control">
+                <input type="checkbox" id="satellite-toggle" name="satellite-toggle">
+              </div>
+            </div>
+            <!-- PLATEAU Building Height -->
+            <div class="settings-row">
+              <label for="plateau-toggle">
+                <span data-localize="plateau_heights">PLATEAU Heights</span>
+                <span class="tooltip-icon" data-tooltip="Use building height data from PLATEAU (国土交通省 3D都市モデル). Provides accurate building heights for supported cities. Experimental feature." data-tooltip-key="tooltip_plateau_heights">?</span>
+                <span class="experimental-badge">試験的</span>
+              </label>
+              <div class="settings-control">
+                <input type="checkbox" id="plateau-toggle" name="plateau-toggle">
+              </div>
+            </div>
+            <!-- GSI 3D Building Height (disabled) -->
+            <div class="settings-row settings-row-disabled">
+              <label for="gsi3d-toggle">
+                <span data-localize="gsi3d_heights">GSI 3D Heights</span>
+                <span class="tooltip-icon" data-tooltip="Use GSI 3D building height data (国土地理院 3D建物データ). Requires a separately obtained GML file. Currently CLI-only (--gsi-3d)." data-tooltip-key="tooltip_gsi3d_heights">?</span>
+                <span class="experimental-badge">要データ準備</span>
+              </label>
+              <div class="settings-control">
+                <input type="checkbox" id="gsi3d-toggle" name="gsi3d-toggle" disabled>
+              </div>
+            </div>
           </div>
         </div>
 

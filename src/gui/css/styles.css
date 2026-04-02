@@ -522,6 +522,67 @@ button:hover {
   gap: 6px;
 }
 
+.settings-row-disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+.experimental-badge {
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background-color: rgba(255, 165, 0, 0.25);
+  color: #ffa500;
+  font-weight: bold;
+  white-space: nowrap;
+}
+
+/* Japan Extensions collapsible section */
+.jp-extensions-section {
+  margin-bottom: 10px;
+}
+
+.jp-extensions-toggle {
+  background: rgba(254, 204, 68, 0.1);
+  border: 1px solid rgba(254, 204, 68, 0.25);
+  border-radius: 4px;
+  color: #fecc44;
+  cursor: pointer;
+  padding: 5px 10px;
+  font-size: 12px;
+  width: 100%;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.jp-extensions-toggle:hover {
+  background: rgba(254, 204, 68, 0.2);
+}
+
+.jp-extensions-arrow {
+  font-size: 10px;
+  transition: transform 0.2s;
+  display: inline-block;
+}
+
+.jp-extensions-arrow.open {
+  transform: rotate(90deg);
+}
+
+.jp-extensions-content {
+  padding: 8px 0 0 8px;
+}
+
+.jp-extensions-content .settings-row {
+  margin-bottom: 6px;
+}
+
+.jp-extensions-content .settings-row label {
+  font-size: 12px;
+}
+
 /* Tooltip icon (question mark in circle) */
 .tooltip-icon {
   display: inline-flex;

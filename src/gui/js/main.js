@@ -433,6 +433,18 @@ function initWorldFormatToggle() {
   updateFormatToggleUI(selectedWorldFormat);
 }
 
+window.toggleJpExtensions = function() {
+  var content = document.getElementById("jp-extensions-content");
+  var arrow = document.getElementById("jp-extensions-arrow");
+  if (content.style.display === "none") {
+    content.style.display = "block";
+    arrow.classList.add("open");
+  } else {
+    content.style.display = "none";
+    arrow.classList.remove("open");
+  }
+};
+
 function setWorldFormat(format) {
   if (format !== 'java' && format !== 'bedrock') return;
   
@@ -923,6 +935,7 @@ async function startGeneration() {
     var land_cover = document.getElementById("land-cover-toggle").checked;
     var satellite_colors = document.getElementById("satellite-toggle").checked;
     var gsi_enabled = document.getElementById("gsi-toggle").checked;
+    var plateau_enabled = document.getElementById("plateau-toggle").checked;
     var scale = parseFloat(document.getElementById("scale-value-slider").value);
     // var ground_level = parseInt(document.getElementById("ground-level").value, 10);
     // DEPRECATED: Ground level input removed from UI
@@ -948,6 +961,7 @@ async function startGeneration() {
         landCoverEnabled: land_cover,
         satelliteColors: satellite_colors,
         gsiEnabled: gsi_enabled,
+        plateauEnabled: plateau_enabled,
         isNewWorld: true,
         spawnPoint: spawnPoint,
         telemetryConsent: telemetryConsent || false,

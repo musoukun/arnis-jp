@@ -12,9 +12,9 @@
       {
         "title": "Arnis",
         "width": 1000,
-        "height": 650,
+        "height": 750,
         "minWidth": 1000,
-        "minHeight": 650,
+        "minHeight": 700,
         "resizable": true,
         "transparent": false,
         "center": true,
