@@ -889,12 +889,7 @@ fn gui_start_generation(
                 level_name,
                 spawn_point: mc_spawn_point,
                 scale: world_scale,
-                scale_factor_x: coord_transformer.scale_factor_x(),
-                scale_factor_z: coord_transformer.scale_factor_z(),
-                min_lat: coord_transformer.min_lat(),
-                min_lng: coord_transformer.min_lng(),
-                len_lat: coord_transformer.len_lat(),
-                len_lng: coord_transformer.len_lng(),
+                jp_export: Some(crate::jp_export::JpExportOptions::from_transformer(&coord_transformer)),
             };
 
             // Create an Args instance with the chosen bounding box
@@ -938,7 +933,7 @@ fn gui_start_generation(
                     CoordTransformer::llbbox_to_xzbbox(&args.bbox, args.scale)
                         .map_err(|e| format!("Failed to create coordinate transformer: {}", e))?;
 
-                let height_resolver = crate::building_height::HeightResolver::new(
+                let mut height_resolver = crate::building_height::HeightResolver::new(
                     coord_transformer.min_lat(),
                     coord_transformer.min_lng(),
                     coord_transformer.len_lat(),
@@ -946,7 +941,10 @@ fn gui_start_generation(
                     coord_transformer.scale_factor_x(),
                     coord_transformer.scale_factor_z(),
                 );
+                // Register Japan-specific height providers (GSI-3D, PLATEAU)
+                crate::jp_data_sources::add_jp_height_providers(&args, &mut height_resolver);
 
+                let jp_ctx = crate::jp_export::JpExportContext::new();
                 let _ = data_processing::generate_world_with_options(
                     parsed_elements,
                     xzbbox.clone(),
@@ -955,6 +953,7 @@ fn gui_start_generation(
                     &args,
                     generation_options.clone(),
                     height_resolver,
+                    Some(jp_ctx),
                 );
                 // Explicitly release session lock before showing Done message
                 // so Minecraft can open the world immediately
@@ -978,16 +977,7 @@ fn gui_start_generation(
             match retrieve_data::fetch_data_from_overpass(args.bbox, args.debug, "requests", None) {
                 Ok(mut raw_data) => {
                     // Merge GSI building data if enabled
-                    if args.gsi {
-                        match crate::gsi_data::fetch_gsi_buildings(args.bbox) {
-                            Ok(gsi_data) => {
-                                raw_data.merge(gsi_data);
-                            }
-                            Err(e) => {
-                                eprintln!("Warning: Failed to fetch GSI data: {e}");
-                            }
-                        }
-                    }
+                    crate::jp_data_sources::merge_gsi_buildings_if_enabled(&args, &mut raw_data);
 
                     let (mut parsed_elements, mut xzbbox) =
                         osm_parser::parse_osm_data(raw_data, args.bbox, args.scale, args.debug);
@@ -1005,20 +995,11 @@ fn gui_start_generation(
                     });
 
                     // Apply satellite colors if enabled
-                    if args.satellite {
-                        match crate::satellite_colors::apply_satellite_colors(
-                            &mut parsed_elements,
-                            &xzbbox,
-                            &args.bbox,
-                        ) {
-                            Ok(count) => println!(
-                                "Applied satellite colors to {count} buildings"
-                            ),
-                            Err(e) => eprintln!(
-                                "Warning: Failed to apply satellite colors: {e}"
-                            ),
-                        }
-                    }
+                    crate::jp_data_sources::apply_satellite_colors_if_enabled(
+                        &args,
+                        &mut parsed_elements,
+                        &xzbbox,
+                    );
 
                     let mut ground = ground::generate_ground_data(&args);
 
@@ -1029,7 +1010,7 @@ fn gui_start_generation(
                         &mut ground,
                     );
 
-                    let height_resolver = crate::building_height::HeightResolver::new(
+                    let mut height_resolver = crate::building_height::HeightResolver::new(
                         coord_transformer.min_lat(),
                         coord_transformer.min_lng(),
                         coord_transformer.len_lat(),
@@ -1037,7 +1018,10 @@ fn gui_start_generation(
                         coord_transformer.scale_factor_x(),
                         coord_transformer.scale_factor_z(),
                     );
+                    // Register Japan-specific height providers (GSI-3D, PLATEAU)
+                    crate::jp_data_sources::add_jp_height_providers(&args, &mut height_resolver);
 
+                    let jp_ctx = crate::jp_export::JpExportContext::new();
                     let _ = data_processing::generate_world_with_options(
                         parsed_elements,
                         xzbbox.clone(),
@@ -1046,6 +1030,7 @@ fn gui_start_generation(
                         &args,
                         generation_options.clone(),
                         height_resolver,
+                        Some(jp_ctx),
                     );
                     // Explicitly release session lock before showing Done message
                     // so Minecraft can open the world immediately

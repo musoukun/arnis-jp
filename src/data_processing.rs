@@ -1,11 +1,9 @@
 use crate::args::Args;
 use crate::building_height::HeightResolver;
-use crate::building_metadata::BuildingMetadataCollector;
 use crate::coordinate_system::cartesian::XZBBox;
 use crate::coordinate_system::geographic::LLBBox;
 use crate::element_processing::*;
 use crate::floodfill_cache::FloodFillCache;
-use crate::world_mapping::{EntityMapping, WorldMappingCollector};
 use crate::ground::Ground;
 use crate::ground_generation;
 use crate::map_renderer;
@@ -29,13 +27,8 @@ pub struct GenerationOptions {
     pub spawn_point: Option<(i32, i32)>,
     /// Scale (blocks per meter)
     pub scale: f64,
-    /// Coordinate transformation parameters for world_mapping.json
-    pub scale_factor_x: f64,
-    pub scale_factor_z: f64,
-    pub min_lat: f64,
-    pub min_lng: f64,
-    pub len_lat: f64,
-    pub len_lng: f64,
+    /// JP-specific coordinate transform parameters (for world_mapping.json)
+    pub jp_export: Option<crate::jp_export::JpExportOptions>,
 }
 
 /// Generate world with explicit format options (used by GUI for Bedrock support)
@@ -47,6 +40,7 @@ pub fn generate_world_with_options(
     args: &Args,
     options: GenerationOptions,
     height_resolver: HeightResolver,
+    jp_export_ctx: Option<crate::jp_export::JpExportContext>,
 ) -> Result<PathBuf, String> {
     let output_path = options.path.clone();
     let world_format = options.format;
@@ -119,11 +113,8 @@ pub fn generate_world_with_options(
         outlines
     };
 
-    // Create building metadata collector for post-processing tools
-    let metadata_collector = BuildingMetadataCollector::new();
-
-    // Create world mapping collector for OSM ↔ Minecraft coordinate mapping
-    let mapping_collector = WorldMappingCollector::new();
+    // JP-specific export context (metadata + mapping collectors)
+    let jp_ctx = jp_export_ctx.unwrap_or_else(crate::jp_export::JpExportContext::new);
 
     // Process all elements
     for element in elements.into_iter() {
@@ -157,7 +148,7 @@ pub fn generate_world_with_options(
                             None,
                             None,
                             &flood_fill_cache,
-                            Some(&metadata_collector),
+                            Some(&jp_ctx.metadata_collector),
                             if height_resolver.has_providers() { Some(&height_resolver) } else { None },
                         );
                     }
@@ -277,7 +268,7 @@ pub fn generate_world_with_options(
                         args,
                         &flood_fill_cache,
                         &xzbbox,
-                        Some(&metadata_collector),
+                        Some(&jp_ctx.metadata_collector),
                         if height_resolver.has_providers() { Some(&height_resolver) } else { None },
                     );
                 } else if rel.tags.contains_key("water")
@@ -338,30 +329,9 @@ pub fn generate_world_with_options(
         &building_footprints,
     )?;
 
-    // Save building metadata JSON for post-processing tools
-    if let Err(e) = metadata_collector.save_to_json(&output_path) {
-        eprintln!("Warning: Failed to save building metadata: {e}");
-    }
-
-    // Save world mapping JSON (OSM ↔ Minecraft coordinate correspondence)
-    if let Err(e) = mapping_collector.save_to_json(
-        &output_path,
-        [
-            llbbox.min().lat(),
-            llbbox.min().lng(),
-            llbbox.max().lat(),
-            llbbox.max().lng(),
-        ],
-        options.scale,
-        options.scale_factor_x,
-        options.scale_factor_z,
-        args.ground_level,
-        options.min_lat,
-        options.min_lng,
-        options.len_lat,
-        options.len_lng,
-    ) {
-        eprintln!("Warning: Failed to save world mapping: {e}");
+    // Save JP-specific export artefacts (buildings.json, world_mapping.json)
+    if let Some(ref jp_opts) = options.jp_export {
+        jp_ctx.save(&output_path, &llbbox, options.scale, jp_opts, args.ground_level);
     }
 
     // Save world

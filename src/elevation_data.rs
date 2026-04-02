@@ -13,17 +13,12 @@ const MAX_Y: i32 = 319;
 /// AWS S3 Terrarium tiles endpoint (no API key required)
 const AWS_TERRARIUM_URL: &str =
     "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png";
-/// GSI (国土地理院) DEM PNG tiles endpoint (no API key required, Japan only)
-const GSI_DEM_URL: &str =
-    "https://cyberjapandata.gsi.go.jp/xyz/dem_png/{z}/{x}/{y}.png";
 /// Terrarium format offset for height decoding
 const TERRARIUM_OFFSET: f64 = 32768.0;
 /// Minimum zoom level for terrain tiles
 const MIN_ZOOM: u8 = 10;
 /// Maximum zoom level for terrain tiles
 const MAX_ZOOM: u8 = 15;
-/// Maximum zoom level for GSI DEM tiles
-const GSI_MAX_ZOOM: u8 = 14;
 /// Maximum concurrent tile downloads to be respectful to AWS
 const MAX_CONCURRENT_DOWNLOADS: usize = 8;
 /// Maximum age for cached tiles in days before they are cleaned up
@@ -174,7 +169,7 @@ fn download_tile(
     use_gsi: bool,
 ) -> Result<TileImage, String> {
     let (source_name, url_template) = if use_gsi {
-        ("GSI DEM", GSI_DEM_URL)
+        (crate::gsi_elevation::source_name(), crate::gsi_elevation::tile_url())
     } else {
         ("AWS Terrain Tiles", AWS_TERRARIUM_URL)
     };
@@ -317,7 +312,7 @@ pub fn fetch_elevation_data(
     let scale_factor_x: f64 = base_scale_x.floor() * scale;
 
     // Calculate zoom and tiles (GSI DEM max zoom is 14)
-    let max_zoom = if use_gsi { GSI_MAX_ZOOM } else { MAX_ZOOM };
+    let max_zoom = if use_gsi { crate::gsi_elevation::max_zoom() } else { MAX_ZOOM };
     let zoom: u8 = calculate_zoom_level(bbox).min(max_zoom);
     let tiles: Vec<(u32, u32)> = get_tile_coordinates(bbox, zoom);
 
@@ -345,7 +340,7 @@ pub fn fetch_elevation_data(
 
     // Download tiles in parallel with limited concurrency
     let num_tiles = tiles.len();
-    let source_name = if use_gsi { "GSI DEM" } else { "AWS" };
+    let source_name = if use_gsi { crate::gsi_elevation::source_name() } else { "AWS" };
     println!(
         "Downloading {num_tiles} {source_name} elevation tiles (up to {MAX_CONCURRENT_DOWNLOADS} concurrent)..."
     );
@@ -361,7 +356,7 @@ pub fn fetch_elevation_data(
             .par_iter()
             .map(|(tile_x, tile_y)| {
                 // Use different cache prefix for GSI vs Terrarium tiles
-                let cache_prefix = if use_gsi { "gsi" } else { "z" };
+                let cache_prefix = if use_gsi { crate::gsi_elevation::cache_prefix() } else { "z" };
                 let tile_path = tile_cache_dir.join(format!("{cache_prefix}{zoom}_x{tile_x}_y{tile_y}.png"));
 
                 let rgba_img = fetch_or_load_tile(&client, *tile_x, *tile_y, zoom, &tile_path, use_gsi)?;
@@ -390,7 +385,7 @@ pub fn fetch_elevation_data(
         for (y, row) in rgba_img.rows().enumerate() {
             for (x, pixel) in row.enumerate() {
                 // GSI DEM: skip no-data pixels (alpha == 0)
-                if use_gsi && pixel[3] == 0 {
+                if use_gsi && crate::gsi_elevation::is_nodata(pixel[3]) {
                     continue;
                 }
 
@@ -426,10 +421,7 @@ pub fn fetch_elevation_data(
 
                 // Decode height based on tile source
                 let height: f64 = if use_gsi {
-                    // GSI DEM PNG: 24bit signed integer, height = value * 0.01
-                    let raw = pixel[0] as i64 * 65536 + pixel[1] as i64 * 256 + pixel[2] as i64;
-                    let signed = if raw >= 8388608 { raw - 16777216 } else { raw };
-                    signed as f64 * 0.01
+                    crate::gsi_elevation::decode_pixel(pixel[0], pixel[1], pixel[2])
                 } else {
                     // Terrarium format: (R * 256 + G + B/256) - 32768
                     (pixel[0] as f64 * 256.0 + pixel[1] as f64 + pixel[2] as f64 / 256.0)

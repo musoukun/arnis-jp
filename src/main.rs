@@ -19,6 +19,9 @@ mod floodfill_cache;
 mod ground;
 mod ground_generation;
 mod gsi_data;
+mod gsi_elevation;
+mod jp_data_sources;
+mod jp_export;
 mod land_cover;
 mod map_renderer;
 mod map_transformation;
@@ -160,24 +163,7 @@ fn run_cli() {
     .expect("Failed to fetch data");
 
     // Merge GSI building data if --gsi flag is set
-    if args.gsi {
-        println!(
-            "{} Fetching GSI building data...",
-            "[GSI]".bright_white().bold()
-        );
-        match gsi_data::fetch_gsi_buildings(args.bbox) {
-            Ok(gsi_data) => {
-                raw_data.merge(gsi_data);
-            }
-            Err(e) => {
-                eprintln!(
-                    "{} Failed to fetch GSI data: {}",
-                    "Warning:".yellow().bold(),
-                    e
-                );
-            }
-        }
-    }
+    jp_data_sources::merge_gsi_buildings_if_enabled(&args, &mut raw_data);
 
     let mut ground = ground::generate_ground_data(&args);
 
@@ -205,22 +191,7 @@ fn run_cli() {
     }
 
     // Apply satellite-based building colors
-    if args.satellite {
-        match satellite_colors::apply_satellite_colors(
-            &mut parsed_elements,
-            &xzbbox,
-            &args.bbox,
-        ) {
-            Ok(count) => println!(
-                "Applied satellite colors to {count} buildings"
-            ),
-            Err(e) => eprintln!(
-                "{} Failed to apply satellite colors: {}",
-                "Warning:".yellow().bold(),
-                e
-            ),
-        }
-    }
+    jp_data_sources::apply_satellite_colors_if_enabled(&args, &mut parsed_elements, &xzbbox);
 
     // Transform map (parsed_elements). Operations are defined in a json file
     map_transformation::transform_map(&mut parsed_elements, &mut xzbbox, &mut ground);
@@ -264,12 +235,7 @@ fn run_cli() {
         level_name,
         spawn_point,
         scale: args.scale,
-        scale_factor_x: coord_transformer.scale_factor_x(),
-        scale_factor_z: coord_transformer.scale_factor_z(),
-        min_lat: coord_transformer.min_lat(),
-        min_lng: coord_transformer.min_lng(),
-        len_lat: coord_transformer.len_lat(),
-        len_lng: coord_transformer.len_lng(),
+        jp_export: Some(jp_export::JpExportOptions::from_transformer(&coord_transformer)),
     };
 
     // Build height resolver with external data sources
@@ -282,53 +248,11 @@ fn run_cli() {
         coord_transformer.scale_factor_z(),
     );
 
-    // Load GSI 3D data if --gsi-3d is specified (highest priority)
-    if let Some(ref gml_path) = args.gsi_3d {
-        println!(
-            "{} Loading GSI 3D building height data...",
-            "[GSI-3D]".bright_white().bold()
-        );
-        match building_height::gsi_3d::Gsi3dProvider::from_gml_file(std::path::Path::new(gml_path))
-        {
-            Ok(provider) => {
-                height_resolver.add_provider(Box::new(provider));
-            }
-            Err(e) => {
-                eprintln!(
-                    "{} Failed to load GSI 3D data: {}",
-                    "Warning:".yellow().bold(),
-                    e
-                );
-            }
-        }
-    }
-
-    // Fetch PLATEAU data if --plateau is specified
-    if args.plateau {
-        println!(
-            "{} Fetching PLATEAU building height data...",
-            "[PLATEAU]".bright_white().bold()
-        );
-        match building_height::plateau::PlateauProvider::from_bbox(
-            args.bbox.min().lat(),
-            args.bbox.min().lng(),
-            args.bbox.max().lat(),
-            args.bbox.max().lng(),
-        ) {
-            Ok(provider) => {
-                height_resolver.add_provider(Box::new(provider));
-            }
-            Err(e) => {
-                eprintln!(
-                    "{} PLATEAU data unavailable: {}",
-                    "Warning:".yellow().bold(),
-                    e
-                );
-            }
-        }
-    }
+    // Register Japan-specific height providers (GSI-3D, PLATEAU)
+    jp_data_sources::add_jp_height_providers(&args, &mut height_resolver);
 
     // Generate world
+    let jp_ctx = jp_export::JpExportContext::new();
     match data_processing::generate_world_with_options(
         parsed_elements,
         xzbbox,
@@ -337,6 +261,7 @@ fn run_cli() {
         &args,
         generation_options,
         height_resolver,
+        Some(jp_ctx),
     ) {
         Ok(_) => {
             if args.bedrock {
