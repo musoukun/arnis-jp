@@ -271,9 +271,13 @@ fn fetch_buildings_from_tileset(
                     match b3dm::parse_b3dm_heights(&bytes) {
                         Ok(b3dm_buildings) => {
                             for bld in b3dm_buildings {
+                                // Use per-building coordinates from Batch Table (_x/_y)
+                                // if available, fall back to tile center otherwise.
+                                let lat = bld.lat.unwrap_or(tile_center_lat);
+                                let lng = bld.lng.unwrap_or(tile_center_lng);
                                 buildings.push(PlateauBuilding {
-                                    lat: tile_center_lat,
-                                    lng: tile_center_lng,
+                                    lat,
+                                    lng,
                                     height_m: bld.measured_height,
                                 });
                             }

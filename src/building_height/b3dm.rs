@@ -27,6 +27,10 @@ const B3DM_MAGIC: &[u8; 4] = b"b3dm";
 pub struct B3dmBuilding {
     /// Measured height in metres (from `bldg:measuredHeight`).
     pub measured_height: f64,
+    /// Latitude of the building centroid (from `_y`), if available.
+    pub lat: Option<f64>,
+    /// Longitude of the building centroid (from `_x`), if available.
+    pub lng: Option<f64>,
     /// Index within the tile (for debugging).
     pub index: usize,
 }
@@ -95,12 +99,18 @@ pub fn parse_b3dm_heights(data: &[u8]) -> Result<Vec<B3dmBuilding>, String> {
     // Extract measuredHeight for each building
     let heights = extract_measured_heights(&bt_json, bt_binary, batch_length);
 
+    // Extract per-building coordinates (_x = lng, _y = lat) from Batch Table binary
+    let lngs = extract_binary_doubles_by_key(&bt_json, bt_binary, "_x", batch_length);
+    let lats = extract_binary_doubles_by_key(&bt_json, bt_binary, "_y", batch_length);
+
     Ok(heights
         .into_iter()
         .enumerate()
         .filter_map(|(i, h)| {
             h.map(|measured_height| B3dmBuilding {
                 measured_height,
+                lat: lats.get(i).copied().flatten(),
+                lng: lngs.get(i).copied().flatten(),
                 index: i,
             })
         })
@@ -145,6 +155,25 @@ fn extract_measured_heights(
     }
 
     heights
+}
+
+/// Extract a DOUBLE binary array from the Batch Table by key name.
+///
+/// Returns `Vec<Option<f64>>` of length `count`.  If the key is missing
+/// or not a binary reference, all entries are `None`.
+fn extract_binary_doubles_by_key(
+    bt_json: &Value,
+    bt_binary: &[u8],
+    key: &str,
+    count: usize,
+) -> Vec<Option<f64>> {
+    let mut out = vec![None; count];
+    if let Some(prop) = bt_json.get(key) {
+        if prop.is_object() {
+            read_binary_doubles(prop, bt_binary, count, &mut out);
+        }
+    }
+    out
 }
 
 /// Read DOUBLE (f64) values from Batch Table binary.
