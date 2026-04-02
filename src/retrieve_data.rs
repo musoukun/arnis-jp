@@ -11,8 +11,58 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::fs::File;
 use std::io::{self, BufReader, Cursor, Write};
+use std::path::PathBuf;
 use std::process::Command;
 use std::time::Duration;
+
+/// Returns the OSM data cache directory path.
+fn get_osm_cache_dir() -> PathBuf {
+    if let Some(cache_dir) = dirs::cache_dir() {
+        cache_dir.join("arnis").join("osm_cache")
+    } else {
+        PathBuf::from("./arnis-osm-cache")
+    }
+}
+
+/// Generates a cache filename from bbox coordinates.
+fn bbox_cache_filename(bbox: &LLBBox) -> String {
+    format!(
+        "osm_{:.6}_{:.6}_{:.6}_{:.6}.json",
+        bbox.min().lat(),
+        bbox.min().lng(),
+        bbox.max().lat(),
+        bbox.max().lng(),
+    )
+}
+
+/// Saves OSM data to the auto-cache directory.
+fn save_to_auto_cache(bbox: &LLBBox, data: &str) {
+    let cache_dir = get_osm_cache_dir();
+    if std::fs::create_dir_all(&cache_dir).is_err() {
+        return;
+    }
+    let cache_path = cache_dir.join(bbox_cache_filename(bbox));
+    if let Ok(mut file) = File::create(&cache_path) {
+        let _ = file.write_all(data.as_bytes());
+        println!(
+            "OSM data cached to: {}",
+            cache_path.display().to_string().bright_black()
+        );
+    }
+}
+
+/// Attempts to load OSM data from the auto-cache directory.
+fn load_from_auto_cache(bbox: &LLBBox) -> Option<OsmData> {
+    let cache_path = get_osm_cache_dir().join(bbox_cache_filename(bbox));
+    if !cache_path.exists() {
+        return None;
+    }
+    let file = File::open(&cache_path).ok()?;
+    let reader = BufReader::new(file);
+    let mut deserializer = serde_json::Deserializer::from_reader(reader);
+    let data = OsmData::deserialize(&mut deserializer).ok()?;
+    Some(data)
+}
 
 /// Function to download data using reqwest
 fn download_with_reqwest(url: &str, query: &str) -> Result<String, Box<dyn std::error::Error>> {
@@ -193,6 +243,15 @@ pub fn fetch_data_from_overpass(
                 Ok(response) => break response,
                 Err(error) => {
                     if attempt >= max_attempts {
+                        // All servers failed — try auto-cache fallback
+                        if let Some(cached_data) = load_from_auto_cache(&bbox) {
+                            println!(
+                                "{} Using cached OSM data for this bbox (API unavailable)",
+                                "[Cache]".bright_white().bold()
+                            );
+                            emit_gui_progress_update(5.0, "Using cached data...");
+                            return Ok(cached_data);
+                        }
                         return Err(error);
                     }
 
@@ -206,6 +265,10 @@ pub fn fetch_data_from_overpass(
             }
         };
 
+        // Auto-cache OSM data for this bbox (always)
+        save_to_auto_cache(&bbox, &response);
+
+        // Also save to user-specified file if requested
         if let Some(save_file) = save_file {
             let mut file: File = File::create(save_file)?;
             file.write_all(response.as_bytes())?;
