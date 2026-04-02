@@ -245,11 +245,17 @@ pub fn fetch_data_from_overpass(
                     if attempt >= max_attempts {
                         // All servers failed — try auto-cache fallback
                         if let Some(cached_data) = load_from_auto_cache(&bbox) {
+                            let msg_en = "API unavailable — using cached OSM data for this area";
+                            let msg_ja = "APIに接続できないため、キャッシュ済みのOSMデータを使用します";
                             println!(
-                                "{} Using cached OSM data for this bbox (API unavailable)",
+                                "{} {msg_en}",
                                 "[Cache]".bright_white().bold()
                             );
-                            emit_gui_progress_update(5.0, "Using cached data...");
+                            // Show bilingual message in GUI progress
+                            emit_gui_progress_update(
+                                3.0,
+                                &format!("{msg_ja} / {msg_en}"),
+                            );
                             return Ok(cached_data);
                         }
                         return Err(error);
@@ -267,6 +273,10 @@ pub fn fetch_data_from_overpass(
 
         // Auto-cache OSM data for this bbox (always)
         save_to_auto_cache(&bbox, &response);
+        emit_gui_progress_update(
+            4.0,
+            "OSMデータをキャッシュしました / OSM data cached",
+        );
 
         // Also save to user-specified file if requested
         if let Some(save_file) = save_file {
