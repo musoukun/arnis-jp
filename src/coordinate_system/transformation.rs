@@ -20,6 +20,22 @@ impl CoordTransformer {
         self.scale_factor_z
     }
 
+    pub fn min_lat(&self) -> f64 {
+        self.min_lat
+    }
+
+    pub fn min_lng(&self) -> f64 {
+        self.min_lng
+    }
+
+    pub fn len_lat(&self) -> f64 {
+        self.len_lat
+    }
+
+    pub fn len_lng(&self) -> f64 {
+        self.len_lng
+    }
+
     pub fn llbbox_to_xzbbox(
         llbbox: &LLBBox,
         scale: f64,

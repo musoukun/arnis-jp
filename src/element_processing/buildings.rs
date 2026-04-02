@@ -2300,6 +2300,7 @@ pub fn generate_buildings(
     relation_levels: Option<i32>,
     hole_polygons: Option<&[HolePolygon]>,
     flood_fill_cache: &FloodFillCache,
+    metadata_collector: Option<&crate::building_metadata::BuildingMetadataCollector>,
 ) {
     // Early return for underground buildings
     if should_skip_underground_building(element) {
@@ -2556,6 +2557,23 @@ pub fn generate_buildings(
         generate_building_roof(
             editor, element, &config, &style, &bounds, &roof_area, category,
         );
+    }
+
+    // Collect building metadata for post-processing tools
+    if let Some(collector) = metadata_collector {
+        collector.add(crate::building_metadata::BuildingMetadata {
+            osm_id: element.id,
+            name: element.tags.get("name").cloned(),
+            building_type: building_type.to_string(),
+            tags: element.tags.clone(),
+            min_x: bounds.min_x,
+            max_x: bounds.max_x,
+            min_z: bounds.min_z,
+            max_z: bounds.max_z,
+            height: building_height,
+            base_y: start_y_offset,
+            floor_area: cached_floor_area.iter().map(|&(x, z)| [x, z]).collect(),
+        });
     }
 }
 
@@ -3977,6 +3995,7 @@ pub fn generate_building_from_relation(
     args: &Args,
     flood_fill_cache: &FloodFillCache,
     xzbbox: &crate::coordinate_system::cartesian::XZBBox,
+    metadata_collector: Option<&crate::building_metadata::BuildingMetadataCollector>,
 ) {
     // Skip underground buildings/building parts
     // Check layer tag
@@ -4159,6 +4178,7 @@ pub fn generate_building_from_relation(
                 Some(relation_levels),
                 hole_polygons.as_deref(),
                 flood_fill_cache,
+                metadata_collector,
             );
         }
     }

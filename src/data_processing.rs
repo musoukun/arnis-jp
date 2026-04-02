@@ -1,8 +1,10 @@
 use crate::args::Args;
+use crate::building_metadata::BuildingMetadataCollector;
 use crate::coordinate_system::cartesian::XZBBox;
 use crate::coordinate_system::geographic::LLBBox;
 use crate::element_processing::*;
 use crate::floodfill_cache::FloodFillCache;
+use crate::world_mapping::{EntityMapping, WorldMappingCollector};
 use crate::ground::Ground;
 use crate::ground_generation;
 use crate::map_renderer;
@@ -24,6 +26,15 @@ pub struct GenerationOptions {
     pub format: WorldFormat,
     pub level_name: Option<String>,
     pub spawn_point: Option<(i32, i32)>,
+    /// Scale (blocks per meter)
+    pub scale: f64,
+    /// Coordinate transformation parameters for world_mapping.json
+    pub scale_factor_x: f64,
+    pub scale_factor_z: f64,
+    pub min_lat: f64,
+    pub min_lng: f64,
+    pub len_lat: f64,
+    pub len_lng: f64,
 }
 
 /// Generate world with explicit format options (used by GUI for Bedrock support)
@@ -106,6 +117,12 @@ pub fn generate_world_with_options(
         outlines
     };
 
+    // Create building metadata collector for post-processing tools
+    let metadata_collector = BuildingMetadataCollector::new();
+
+    // Create world mapping collector for OSM ↔ Minecraft coordinate mapping
+    let mapping_collector = WorldMappingCollector::new();
+
     // Process all elements
     for element in elements.into_iter() {
         process_pb.inc(1);
@@ -138,6 +155,7 @@ pub fn generate_world_with_options(
                             None,
                             None,
                             &flood_fill_cache,
+                            Some(&metadata_collector),
                         );
                     }
                 } else if way.tags.contains_key("highway") {
@@ -256,6 +274,7 @@ pub fn generate_world_with_options(
                         args,
                         &flood_fill_cache,
                         &xzbbox,
+                        Some(&metadata_collector),
                     );
                 } else if rel.tags.contains_key("water")
                     || rel
@@ -314,6 +333,32 @@ pub fn generate_world_with_options(
         &xzbbox,
         &building_footprints,
     )?;
+
+    // Save building metadata JSON for post-processing tools
+    if let Err(e) = metadata_collector.save_to_json(&output_path) {
+        eprintln!("Warning: Failed to save building metadata: {e}");
+    }
+
+    // Save world mapping JSON (OSM ↔ Minecraft coordinate correspondence)
+    if let Err(e) = mapping_collector.save_to_json(
+        &output_path,
+        [
+            llbbox.min().lat(),
+            llbbox.min().lng(),
+            llbbox.max().lat(),
+            llbbox.max().lng(),
+        ],
+        options.scale,
+        options.scale_factor_x,
+        options.scale_factor_z,
+        args.ground_level,
+        options.min_lat,
+        options.min_lng,
+        options.len_lat,
+        options.len_lng,
+    ) {
+        eprintln!("Warning: Failed to save world mapping: {e}");
+    }
 
     // Save world
     if let Err(e) = editor.save() {

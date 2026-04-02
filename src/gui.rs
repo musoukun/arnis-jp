@@ -873,11 +873,26 @@ fn gui_start_generation(
             };
 
             // Create generation options
+            // Compute coordinate transformation parameters for world_mapping.json
+            let (coord_transformer, _) =
+                crate::coordinate_system::transformation::CoordTransformer::llbbox_to_xzbbox(&bbox, world_scale)
+                    .unwrap_or_else(|e| {
+                        eprintln!("Failed to create coordinate transformer: {e}");
+                        std::process::exit(1);
+                    });
+
             let generation_options = GenerationOptions {
                 path: generation_path.clone(),
                 format: world_format,
                 level_name,
                 spawn_point: mc_spawn_point,
+                scale: world_scale,
+                scale_factor_x: coord_transformer.scale_factor_x(),
+                scale_factor_z: coord_transformer.scale_factor_z(),
+                min_lat: coord_transformer.min_lat(),
+                min_lng: coord_transformer.min_lng(),
+                len_lat: coord_transformer.len_lat(),
+                len_lng: coord_transformer.len_lng(),
             };
 
             // Create an Args instance with the chosen bounding box

@@ -5,6 +5,7 @@ mod args;
 mod bedrock_block_map;
 mod block_definitions;
 mod bresenham;
+mod building_metadata;
 mod clipping;
 mod colors;
 mod coordinate_system;
@@ -31,6 +32,7 @@ mod telemetry;
 mod test_utilities;
 mod version_check;
 mod world_editor;
+mod world_mapping;
 mod world_utils;
 
 use args::Args;
@@ -201,6 +203,24 @@ fn run_cli() {
         }
     }
 
+    // Apply satellite-based building colors
+    if args.satellite {
+        match satellite_colors::apply_satellite_colors(
+            &mut parsed_elements,
+            &xzbbox,
+            &args.bbox,
+        ) {
+            Ok(count) => println!(
+                "Applied satellite colors to {count} buildings"
+            ),
+            Err(e) => eprintln!(
+                "{} Failed to apply satellite colors: {}",
+                "Warning:".yellow().bold(),
+                e
+            ),
+        }
+    }
+
     // Transform map (parsed_elements). Operations are defined in a json file
     map_transformation::transform_map(&mut parsed_elements, &mut xzbbox, &mut ground);
 
@@ -232,11 +252,23 @@ fn run_cli() {
     };
 
     // Build generation options
+    // Compute coordinate transformation parameters for world_mapping.json
+    let (coord_transformer, _) =
+        coordinate_system::transformation::CoordTransformer::llbbox_to_xzbbox(&args.bbox, args.scale)
+            .expect("Failed to create coordinate transformer");
+
     let generation_options = data_processing::GenerationOptions {
         path: generation_path.clone(),
         format: world_format,
         level_name,
         spawn_point,
+        scale: args.scale,
+        scale_factor_x: coord_transformer.scale_factor_x(),
+        scale_factor_z: coord_transformer.scale_factor_z(),
+        min_lat: coord_transformer.min_lat(),
+        min_lng: coord_transformer.min_lng(),
+        len_lat: coord_transformer.len_lat(),
+        len_lng: coord_transformer.len_lng(),
     };
 
     // Generate world
