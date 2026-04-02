@@ -76,7 +76,7 @@ fn download_with_reqwest(url: &str, query: &str) -> Result<String, Box<dyn std::
 
     match response {
         Ok(resp) => {
-            emit_gui_progress_update(3.0, "Downloading data...");
+            emit_gui_progress_update(3.0, "OSMデータをダウンロード中... / Downloading data...");
             if resp.status().is_success() {
                 let text = resp.text()?;
                 if text.is_empty() {
@@ -147,7 +147,7 @@ fn download_with_wget(url: &str, query: &str) -> io::Result<String> {
 
 pub fn fetch_data_from_file(file: &str) -> Result<OsmData, Box<dyn std::error::Error>> {
     println!("{} Loading data from file...", "[1/7]".bold());
-    emit_gui_progress_update(1.0, "Loading data from file...");
+    emit_gui_progress_update(1.0, "キャッシュファイルからデータを読み込み中... / Loading data from file...");
 
     let file: File = File::open(file)?;
     let reader: BufReader<File> = BufReader::new(file);
@@ -164,7 +164,7 @@ pub fn fetch_data_from_overpass(
     save_file: Option<&str>,
 ) -> Result<OsmData, Box<dyn std::error::Error>> {
     println!("{} Fetching data...", "[1/7]".bold());
-    emit_gui_progress_update(1.0, "Fetching data...");
+    emit_gui_progress_update(1.0, "OSMデータを取得中... / Fetching data...");
 
     // List of Overpass API servers
     let api_servers: Vec<&str> = vec![
@@ -294,7 +294,7 @@ pub fn fetch_data_from_overpass(
                 // Check if the remark mentions memory or other runtime errors
                 if remark.contains("runtime error") && remark.contains("out of memory") {
                     eprintln!("{}", "Error! The query ran out of memory on the Overpass API server. Try using a smaller area.".red().bold());
-                    emit_gui_error("Try using a smaller area.");
+                    emit_gui_error("範囲が広すぎます。小さい範囲を選択してください");
                 } else {
                     // Handle other Overpass API errors if present in the remark field
                     eprintln!("{}", format!("Error! API returned: {remark}").red().bold());
@@ -308,7 +308,7 @@ pub fn fetch_data_from_overpass(
                         .red()
                         .bold()
                 );
-                emit_gui_error("API returned no data. Please try again!");
+                emit_gui_error("APIからデータが返されませんでした。再試行してください");
             }
 
             if debug {

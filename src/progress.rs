@@ -49,12 +49,13 @@ pub fn emit_gui_progress_update(progress: f64, message: &str) {
 }
 
 pub fn emit_gui_error(message: &str) {
-    let truncated_message = if message.len() > 35 {
-        &message[..35]
+    // Use char count instead of byte length to avoid splitting multibyte characters (e.g. Japanese)
+    let truncated_message: String = if message.chars().count() > 50 {
+        message.chars().take(50).collect()
     } else {
-        message
+        message.to_string()
     };
-    emit_gui_progress_update(0.0, &format!("Error! {truncated_message}"));
+    emit_gui_progress_update(0.0, &format!("エラー / Error: {truncated_message}"));
 }
 
 /// Emits an event when the world map preview is ready
