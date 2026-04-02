@@ -55,6 +55,16 @@ pub struct Args {
     #[arg(long, default_value_t = false)]
     pub gsi: bool,
 
+    /// Path to a GSI 3D GML file for accurate building heights (optional)
+    /// Uses maxElv - grElv from 電子国土基本図3次元データ.
+    #[arg(long = "gsi-3d", value_name = "FILE")]
+    pub gsi_3d: Option<String>,
+
+    /// Fetch building heights from PLATEAU 3D Tiles (optional, Japan only)
+    /// Automatically downloads measuredHeight for cities covered by PLATEAU.
+    #[arg(long, default_value_t = false)]
+    pub plateau: bool,
+
     /// Enable interior generation (optional)
     #[arg(long, default_value_t = true, action = ArgAction::Set, num_args = 0..=1, default_missing_value = "true")]
     pub interior: bool,

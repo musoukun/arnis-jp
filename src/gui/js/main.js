@@ -124,6 +124,7 @@ async function applyLocalization(localization) {
     "h2[data-localize='license_and_credits']": "license_and_credits",
 
     // Placeholder strings
+    "input[id='world-name-input']": "placeholder_world_name",
     "input[id='bbox-coords']": "placeholder_bbox",
     // DEPRECATED: Ground level placeholder removed
     // "input[id='ground-level']": "placeholder_ground"
@@ -794,6 +795,20 @@ function displayBboxInfoText(bboxText) {
 
 let worldPath = "";
 
+/**
+ * Validates a world name input.
+ * Returns null if valid, or an error message key if invalid.
+ */
+function validateWorldName(name) {
+  if (!name) return null;
+  if (!name.trim()) return "world_name_whitespace_only";
+  if (/[<>:"/\\|?*]/.test(name)) return "world_name_invalid_chars";
+  if (/[\x00-\x1f\x7f]/.test(name)) return "world_name_invalid_chars";
+  if (/^[\s.]|[\s.]$/.test(name)) return "world_name_invalid_edges";
+  if (/^(CON|PRN|AUX|NUL|COM\d|LPT\d)$/i.test(name.trim())) return "world_name_reserved";
+  return null;
+}
+
 async function createWorld() {
   // Don't create if format is Bedrock (button should be disabled)
   if (selectedWorldFormat === 'bedrock') return;
@@ -804,8 +819,23 @@ async function createWorld() {
     return;
   }
 
+  const nameInput = document.getElementById('world-name-input');
+  const rawName = nameInput.value;
+  const customName = rawName ? rawName.trim() : "";
+
+  const validationError = validateWorldName(rawName);
+  if (validationError) {
+    nameInput.classList.add('input-error');
+    const selectedWorld = document.getElementById('selected-world');
+    localizeElement(window.localization, { element: selectedWorld }, validationError);
+    selectedWorld.style.color = "#fa7878";
+    setTimeout(() => nameInput.classList.remove('input-error'), 2000);
+    return;
+  }
+  nameInput.classList.remove('input-error');
+
   try {
-    const worldName = await invoke('gui_create_world', { savePath: savePath });
+    const worldName = await invoke('gui_create_world', { savePath: savePath, customName: customName || null });
     if (worldName) {
       worldPath = worldName;
       const lastSegment = worldName.split(/[\\/]/).pop();
@@ -829,7 +859,8 @@ function handleWorldSelectionError(errorCode) {
     1: "minecraft_directory_not_found",
     2: "world_in_use",
     3: "failed_to_create_world",
-    4: "no_world_selected_error"
+    4: "no_world_selected_error",
+    5: "world_name_already_exists"
   };
 
   const errorKey = errorKeys[errorCode] || "unknown_error";

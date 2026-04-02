@@ -1,4 +1,5 @@
 use crate::args::Args;
+use crate::building_height::HeightResolver;
 use crate::building_metadata::BuildingMetadataCollector;
 use crate::coordinate_system::cartesian::XZBBox;
 use crate::coordinate_system::geographic::LLBBox;
@@ -45,6 +46,7 @@ pub fn generate_world_with_options(
     ground: Ground,
     args: &Args,
     options: GenerationOptions,
+    height_resolver: HeightResolver,
 ) -> Result<PathBuf, String> {
     let output_path = options.path.clone();
     let world_format = options.format;
@@ -156,6 +158,7 @@ pub fn generate_world_with_options(
                             None,
                             &flood_fill_cache,
                             Some(&metadata_collector),
+                            if height_resolver.has_providers() { Some(&height_resolver) } else { None },
                         );
                     }
                 } else if way.tags.contains_key("highway") {
@@ -275,6 +278,7 @@ pub fn generate_world_with_options(
                         &flood_fill_cache,
                         &xzbbox,
                         Some(&metadata_collector),
+                        if height_resolver.has_providers() { Some(&height_resolver) } else { None },
                     );
                 } else if rel.tags.contains_key("water")
                     || rel

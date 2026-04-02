@@ -41,6 +41,8 @@ Thumbs.db
 flake/
 gen/
 
+# Work directory → .git/info/exclude に移動（CCに認識させるため）
+
 # Miscellaneous
 *.bak
 *.old
@@ -50,3 +52,5 @@ gen/
 /flake/*
 !/flake/flake.nix
 !/flake/flake.lock
+# test output
+test_output

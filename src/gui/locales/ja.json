@@ -63,5 +63,11 @@
   "help_improve_arnis": "Arnisの改善にご協力ください",
   "telemetry_description": "クラッシュやパフォーマンスなどの匿名使用データを収集し、Arnisの安定性と速度の改善に役立てます。個人データやワールドの内容は収集されません。",
   "telemetry_reject": "いいえ",
-  "telemetry_accept": "匿名データを許可"
+  "telemetry_accept": "匿名データを許可",
+  "placeholder_world_name": "ワールド名を入力してください（任意）",
+  "world_name_whitespace_only": "スペースのみの名前は使用できません",
+  "world_name_invalid_chars": "使用できない文字が含まれています",
+  "world_name_invalid_edges": "先頭・末尾にスペースやピリオドは使用できません",
+  "world_name_reserved": "この名前はシステムで予約されています",
+  "world_name_already_exists": "同じ名前のワールドが既に存在します"
 }

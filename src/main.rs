@@ -5,6 +5,7 @@ mod args;
 mod bedrock_block_map;
 mod block_definitions;
 mod bresenham;
+mod building_height;
 mod building_metadata;
 mod clipping;
 mod colors;
@@ -132,7 +133,7 @@ fn run_cli() {
     } else {
         // Java: create a new world in the provided output directory
         let base_dir = args.path.clone().unwrap();
-        let world_path = match world_utils::create_new_world(&base_dir) {
+        let world_path = match world_utils::create_new_world(&base_dir, None) {
             Ok(path) => PathBuf::from(path),
             Err(e) => {
                 eprintln!("{} {}", "Error:".red().bold(), e);
@@ -271,6 +272,62 @@ fn run_cli() {
         len_lng: coord_transformer.len_lng(),
     };
 
+    // Build height resolver with external data sources
+    let mut height_resolver = building_height::HeightResolver::new(
+        coord_transformer.min_lat(),
+        coord_transformer.min_lng(),
+        coord_transformer.len_lat(),
+        coord_transformer.len_lng(),
+        coord_transformer.scale_factor_x(),
+        coord_transformer.scale_factor_z(),
+    );
+
+    // Load GSI 3D data if --gsi-3d is specified (highest priority)
+    if let Some(ref gml_path) = args.gsi_3d {
+        println!(
+            "{} Loading GSI 3D building height data...",
+            "[GSI-3D]".bright_white().bold()
+        );
+        match building_height::gsi_3d::Gsi3dProvider::from_gml_file(std::path::Path::new(gml_path))
+        {
+            Ok(provider) => {
+                height_resolver.add_provider(Box::new(provider));
+            }
+            Err(e) => {
+                eprintln!(
+                    "{} Failed to load GSI 3D data: {}",
+                    "Warning:".yellow().bold(),
+                    e
+                );
+            }
+        }
+    }
+
+    // Fetch PLATEAU data if --plateau is specified
+    if args.plateau {
+        println!(
+            "{} Fetching PLATEAU building height data...",
+            "[PLATEAU]".bright_white().bold()
+        );
+        match building_height::plateau::PlateauProvider::from_bbox(
+            args.bbox.min().lat(),
+            args.bbox.min().lng(),
+            args.bbox.max().lat(),
+            args.bbox.max().lng(),
+        ) {
+            Ok(provider) => {
+                height_resolver.add_provider(Box::new(provider));
+            }
+            Err(e) => {
+                eprintln!(
+                    "{} PLATEAU data unavailable: {}",
+                    "Warning:".yellow().bold(),
+                    e
+                );
+            }
+        }
+    }
+
     // Generate world
     match data_processing::generate_world_with_options(
         parsed_elements,
@@ -279,6 +336,7 @@ fn run_cli() {
         ground,
         &args,
         generation_options,
+        height_resolver,
     ) {
         Ok(_) => {
             if args.bedrock {

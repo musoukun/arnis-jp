@@ -80,32 +80,40 @@ pub fn build_bedrock_output(bbox: &LLBBox, output_dir: PathBuf) -> (PathBuf, Str
 /// (with updated name, timestamp, and spawn position), and icon.png.
 ///
 /// Returns the full path to the newly created world directory.
-pub fn create_new_world(base_path: &Path) -> Result<String, String> {
-    // Generate a unique world name with proper counter
-    // Check for both "Arnis World X" and "Arnis World X: Location" patterns
-    let mut counter: i32 = 1;
-    let unique_name: String = loop {
-        let candidate_name: String = format!("Arnis World {counter}");
-        let candidate_path: PathBuf = base_path.join(&candidate_name);
-
-        // Check for exact match (no location suffix)
-        let exact_match_exists = candidate_path.exists();
-
-        // Check for worlds with location suffix (Arnis World X: Location)
-        let location_pattern = format!("Arnis World {counter}: ");
-        let location_match_exists = fs::read_dir(base_path)
-            .map(|entries| {
-                entries
-                    .filter_map(Result::ok)
-                    .filter_map(|entry| entry.file_name().into_string().ok())
-                    .any(|name| name.starts_with(&location_pattern))
-            })
-            .unwrap_or(false);
-
-        if !exact_match_exists && !location_match_exists {
-            break candidate_name;
+pub fn create_new_world(base_path: &Path, custom_name: Option<&str>) -> Result<String, String> {
+    let unique_name: String = match custom_name {
+        Some(name) if !name.is_empty() => {
+            let candidate_path = base_path.join(name);
+            if candidate_path.exists() {
+                return Err(format!("World '{}' already exists", name));
+            }
+            name.to_string()
         }
-        counter += 1;
+        _ => {
+            // Generate a unique world name with proper counter
+            let mut counter: i32 = 1;
+            loop {
+                let candidate_name: String = format!("Arnis World {counter}");
+                let candidate_path: PathBuf = base_path.join(&candidate_name);
+
+                let exact_match_exists = candidate_path.exists();
+
+                let location_pattern = format!("Arnis World {counter}: ");
+                let location_match_exists = fs::read_dir(base_path)
+                    .map(|entries| {
+                        entries
+                            .filter_map(Result::ok)
+                            .filter_map(|entry| entry.file_name().into_string().ok())
+                            .any(|name| name.starts_with(&location_pattern))
+                    })
+                    .unwrap_or(false);
+
+                if !exact_match_exists && !location_match_exists {
+                    break candidate_name;
+                }
+                counter += 1;
+            }
+        }
     };
 
     let new_world_path: PathBuf = base_path.join(&unique_name);
@@ -286,4 +294,61 @@ pub fn set_spawn_in_level_dat(world_path: &Path, spawn_x: i32, spawn_z: i32) -> 
         .map_err(|e| format!("Failed to write updated level.dat: {e}"))?;
 
     Ok(())
+}
+
+/// Rename a world: update LevelName in level.dat AND rename the folder.
+///
+/// Returns the new world path after renaming.
+pub fn rename_world(world_path: &Path, new_name: &str) -> Result<PathBuf, String> {
+    let level_path = world_path.join("level.dat");
+    if !level_path.exists() {
+        return Err(format!("level.dat not found at {level_path:?}"));
+    }
+
+    // Read, decompress, parse
+    let level_data =
+        fs::read(&level_path).map_err(|e| format!("Failed to read level.dat: {e}"))?;
+    let mut decoder = GzDecoder::new(level_data.as_slice());
+    let mut decompressed = Vec::new();
+    decoder
+        .read_to_end(&mut decompressed)
+        .map_err(|e| format!("Failed to decompress level.dat: {e}"))?;
+    let mut nbt: Value = fastnbt::from_bytes(&decompressed)
+        .map_err(|e| format!("Failed to parse level.dat: {e}"))?;
+
+    // Update LevelName
+    if let Value::Compound(ref mut root) = nbt {
+        if let Some(Value::Compound(ref mut data)) = root.get_mut("Data") {
+            data.insert(
+                "LevelName".to_string(),
+                Value::String(new_name.to_string()),
+            );
+        }
+    }
+
+    // Serialize, compress, write
+    let serialized =
+        fastnbt::to_bytes(&nbt).map_err(|e| format!("Failed to serialize level.dat: {e}"))?;
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder
+        .write_all(&serialized)
+        .map_err(|e| format!("Failed to compress level.dat: {e}"))?;
+    let compressed = encoder
+        .finish()
+        .map_err(|e| format!("Failed to finalize level.dat: {e}"))?;
+    fs::write(&level_path, compressed)
+        .map_err(|e| format!("Failed to write level.dat: {e}"))?;
+
+    // Rename folder
+    let parent = world_path
+        .parent()
+        .ok_or("Cannot determine parent directory")?;
+    let new_path = parent.join(new_name);
+    if new_path.exists() {
+        return Err(format!("Destination already exists: {}", new_path.display()));
+    }
+    fs::rename(world_path, &new_path)
+        .map_err(|e| format!("Failed to rename world folder: {e}"))?;
+
+    Ok(new_path)
 }

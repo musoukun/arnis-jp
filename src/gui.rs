@@ -208,7 +208,7 @@ fn gui_pick_save_directory(start_path: String) -> Result<String, String> {
 /// Creates a new Java Edition world in the given base save directory.
 /// Called when the user clicks "Create World".
 #[tauri::command]
-fn gui_create_world(save_path: String) -> Result<String, i32> {
+fn gui_create_world(save_path: String, custom_name: Option<String>) -> Result<String, i32> {
     let trimmed = save_path.trim();
     if trimmed.is_empty() {
         return Err(3);
@@ -217,11 +217,13 @@ fn gui_create_world(save_path: String) -> Result<String, i32> {
     if !base.is_dir() {
         return Err(3); // Error code 3: Failed to create new world
     }
-    create_new_world(&base).map_err(|_| 3)
+    create_new_world(&base, custom_name.as_deref()).map_err(|e| {
+        if e.contains("already exists") { 5 } else { 3 }
+    })
 }
 
-fn create_new_world(base_path: &Path) -> Result<String, String> {
-    crate::world_utils::create_new_world(base_path)
+fn create_new_world(base_path: &Path, custom_name: Option<&str>) -> Result<String, String> {
+    crate::world_utils::create_new_world(base_path, custom_name)
 }
 
 /// Adds localized area name to the world name in level.dat
@@ -913,6 +915,8 @@ fn gui_start_generation(
                 terrain: terrain_enabled,
                 satellite: satellite_colors,
                 gsi: gsi_enabled,
+                gsi_3d: None, // TODO: Add GUI file picker for GSI 3D GML
+                plateau: false, // TODO: Add GUI checkbox for PLATEAU
                 interior: interior_enabled,
                 roof: roof_enabled,
                 fillground: fillground_enabled,
@@ -934,6 +938,15 @@ fn gui_start_generation(
                     CoordTransformer::llbbox_to_xzbbox(&args.bbox, args.scale)
                         .map_err(|e| format!("Failed to create coordinate transformer: {}", e))?;
 
+                let height_resolver = crate::building_height::HeightResolver::new(
+                    coord_transformer.min_lat(),
+                    coord_transformer.min_lng(),
+                    coord_transformer.len_lat(),
+                    coord_transformer.len_lng(),
+                    coord_transformer.scale_factor_x(),
+                    coord_transformer.scale_factor_z(),
+                );
+
                 let _ = data_processing::generate_world_with_options(
                     parsed_elements,
                     xzbbox.clone(),
@@ -941,6 +954,7 @@ fn gui_start_generation(
                     ground,
                     &args,
                     generation_options.clone(),
+                    height_resolver,
                 );
                 // Explicitly release session lock before showing Done message
                 // so Minecraft can open the world immediately
@@ -1015,6 +1029,15 @@ fn gui_start_generation(
                         &mut ground,
                     );
 
+                    let height_resolver = crate::building_height::HeightResolver::new(
+                        coord_transformer.min_lat(),
+                        coord_transformer.min_lng(),
+                        coord_transformer.len_lat(),
+                        coord_transformer.len_lng(),
+                        coord_transformer.scale_factor_x(),
+                        coord_transformer.scale_factor_z(),
+                    );
+
                     let _ = data_processing::generate_world_with_options(
                         parsed_elements,
                         xzbbox.clone(),
@@ -1022,6 +1045,7 @@ fn gui_start_generation(
                         ground,
                         &args,
                         generation_options.clone(),
+                        height_resolver,
                     );
                     // Explicitly release session lock before showing Done message
                     // so Minecraft can open the world immediately

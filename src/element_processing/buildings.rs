@@ -1,6 +1,7 @@
 use crate::args::Args;
 use crate::block_definitions::*;
 use crate::bresenham::bresenham_line;
+use crate::building_height::HeightResolver;
 use crate::clipping::clip_way_to_bbox;
 use crate::colors::color_text_to_rgb_tuple;
 use crate::coordinate_system::cartesian::XZPoint;
@@ -1072,13 +1073,29 @@ fn get_wall_block_for_category(category: BuildingCategory, rng: &mut impl Rng) -
     }
 }
 
-/// Determines building height from OSM tags
+/// Determines building height from external providers and OSM tags.
+///
+/// Priority (highest first):
+/// 1. External height provider (GSI 3D, PLATEAU, etc.)
+/// 2. Relation levels
+/// 3. OSM `height` tag
+/// 4. OSM `building:levels` tag
+/// 5. Default (6m)
 fn calculate_building_height(
     element: &ProcessedWay,
     min_level: i32,
     scale_factor: f64,
     relation_levels: Option<i32>,
+    external_height_m: Option<f64>,
 ) -> (i32, bool) {
+    // If an external provider supplied a height, use it directly
+    if let Some(height_m) = external_height_m {
+        let building_height = (height_m * scale_factor).round() as i32;
+        let building_height = building_height.max(3);
+        let is_tall = height_m > 28.0;
+        return (building_height, is_tall);
+    }
+
     let default_height = ((6.0 * scale_factor) as i32).max(3);
     let mut building_height = default_height;
     let mut is_tall_building = false;
@@ -1107,7 +1124,7 @@ fn calculate_building_height(
         }
     }
 
-    // From relation levels (highest priority)
+    // From relation levels (highest priority among OSM sources)
     if let Some(levels) = relation_levels {
         building_height = multiply_scale(levels * 4 + 2, scale_factor).max(3);
         if levels > 7 {
@@ -2301,6 +2318,7 @@ pub fn generate_buildings(
     hole_polygons: Option<&[HolePolygon]>,
     flood_fill_cache: &FloodFillCache,
     metadata_collector: Option<&crate::building_metadata::BuildingMetadataCollector>,
+    height_resolver: Option<&HeightResolver>,
 ) {
     // Early return for underground buildings
     if should_skip_underground_building(element) {
@@ -2369,6 +2387,17 @@ pub fn generate_buildings(
     // Calculate building bounds
     let bounds = BuildingBounds::from_nodes(&element.nodes);
 
+    // Resolve external height once via centroid lookup (if a resolver is available)
+    let external_height_m: Option<f64> = height_resolver.and_then(|resolver| {
+        if !resolver.has_providers() || element.nodes.is_empty() {
+            return None;
+        }
+        let n = element.nodes.len() as f64;
+        let cx = element.nodes.iter().map(|nd| nd.x as f64).sum::<f64>() / n;
+        let cz = element.nodes.iter().map(|nd| nd.z as f64).sum::<f64>() / n;
+        resolver.resolve_mc(cx as i32, cz as i32).map(|r| r.height_m)
+    });
+
     // Get building type
     let building_type = element
         .tags
@@ -2401,7 +2430,7 @@ pub fn generate_buildings(
             }
             "parking" => {
                 let (height, _) =
-                    calculate_building_height(element, min_level, scale_factor, relation_levels);
+                    calculate_building_height(element, min_level, scale_factor, relation_levels, external_height_m);
                 generate_parking_building(editor, element, &cached_floor_area, height);
                 return;
             }
@@ -2423,7 +2452,7 @@ pub fn generate_buildings(
             .is_some_and(|p| p == "multi-storey")
         {
             let (height, _) =
-                calculate_building_height(element, min_level, scale_factor, relation_levels);
+                calculate_building_height(element, min_level, scale_factor, relation_levels, external_height_m);
             generate_parking_building(editor, element, &cached_floor_area, height);
             return;
         }
@@ -2431,7 +2460,7 @@ pub fn generate_buildings(
 
     // Calculate building height with type-specific adjustments
     let (mut building_height, is_tall_building) =
-        calculate_building_height(element, min_level, scale_factor, relation_levels);
+        calculate_building_height(element, min_level, scale_factor, relation_levels, external_height_m);
     building_height = adjust_height_for_building_type(building_type, building_height, scale_factor);
 
     // Determine building category and get appropriate style preset
@@ -3996,6 +4025,7 @@ pub fn generate_building_from_relation(
     flood_fill_cache: &FloodFillCache,
     xzbbox: &crate::coordinate_system::cartesian::XZBBox,
     metadata_collector: Option<&crate::building_metadata::BuildingMetadataCollector>,
+    height_resolver: Option<&HeightResolver>,
 ) {
     // Skip underground buildings/building parts
     // Check layer tag
@@ -4179,6 +4209,7 @@ pub fn generate_building_from_relation(
                 hole_polygons.as_deref(),
                 flood_fill_cache,
                 metadata_collector,
+                height_resolver,
             );
         }
     }

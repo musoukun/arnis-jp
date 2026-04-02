@@ -264,11 +264,41 @@ button:hover {
   width: 100%;
 }
 
+.world-name-input-container {
+  width: 100%;
+}
+
+.world-name-input {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 0.9em;
+  border: 1px solid transparent;
+  border-radius: 8px 8px 0 0;
+  background-color: #0f0f0f98;
+  color: #ffffff;
+  outline: none;
+  transition: border-color 0.25s ease;
+  box-sizing: border-box;
+  margin-bottom: 0;
+}
+
+.world-name-input::placeholder {
+  color: #888;
+}
+
+.world-name-input:focus {
+  border-color: var(--primary-accent);
+}
+
+.world-name-input.input-error {
+  border-color: #fa7878;
+}
+
 .choose-world-btn {
   padding: 10px;
   line-height: 1.2;
   width: 100%;
-  border-radius: 8px 8px 0 0 !important;
+  border-radius: 0 !important;
   margin-bottom: 0 !important;
   margin-top: 0 !important;
   box-shadow: none !important;

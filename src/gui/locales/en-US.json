@@ -63,5 +63,11 @@
   "help_improve_arnis": "Help improve Arnis",
   "telemetry_description": "We'd like to collect anonymous usage data like crashes and performance to make Arnis more stable and faster. No personal data or world contents are collected.",
   "telemetry_reject": "No thanks",
-  "telemetry_accept": "Allow anonymous data"
+  "telemetry_accept": "Allow anonymous data",
+  "placeholder_world_name": "World name (optional)",
+  "world_name_whitespace_only": "World name cannot be whitespace only",
+  "world_name_invalid_chars": "World name contains invalid characters",
+  "world_name_invalid_edges": "World name cannot start/end with space or period",
+  "world_name_reserved": "This name is reserved by the system",
+  "world_name_already_exists": "A world with this name already exists"
 }

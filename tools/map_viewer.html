@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>arnis-jp 座標変換ツール</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'Segoe UI', system-ui, sans-serif; background: #1a1a2e; color: #e0e0e0; min-height: 100vh; }
+
+.container { max-width: 700px; margin: 0 auto; padding: 20px; }
+
+h1 { color: #e94560; font-size: 22px; margin-bottom: 4px; }
+.subtitle { color: #666; font-size: 13px; margin-bottom: 24px; }
+
+.card { background: #16213e; border: 1px solid #0f3460; border-radius: 10px; padding: 20px; margin-bottom: 16px; }
+.card h2 { font-size: 15px; color: #e94560; margin-bottom: 14px; letter-spacing: 1px; }
+
+.row { display: flex; gap: 10px; margin-bottom: 10px; align-items: center; }
+.row label { width: 70px; font-size: 13px; color: #aaa; flex-shrink: 0; }
+.row input { flex: 1; background: #0a0a1a; border: 1px solid #0f3460; color: #e0e0e0; padding: 10px 12px; border-radius: 6px; font-size: 15px; font-family: 'Consolas', monospace; }
+.row input:focus { outline: none; border-color: #e94560; }
+.row input[readonly] { color: #4fc3f7; background: #0a0a2a; }
+
+.btn { background: #e94560; color: white; border: none; padding: 12px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; width: 100%; transition: background 0.2s; margin-top: 4px; }
+.btn:hover { background: #c73650; }
+.btn:disabled { background: #333; cursor: not-allowed; }
+
+.links { display: flex; gap: 8px; margin-top: 12px; }
+.links a { flex: 1; display: block; text-align: center; color: #4fc3f7; text-decoration: none; font-size: 13px; padding: 10px; border: 1px solid #0f3460; border-radius: 6px; transition: all 0.2s; }
+.links a:hover { background: #0f3460; color: #fff; }
+.links a.sv { border-color: #e94560; color: #e94560; }
+.links a.sv:hover { background: #e94560; color: #fff; }
+
+.drop-zone { border: 2px dashed #0f3460; border-radius: 10px; padding: 30px; text-align: center; cursor: pointer; transition: all 0.3s; margin-bottom: 16px; }
+.drop-zone:hover, .drop-zone.dragover { border-color: #e94560; background: rgba(233,69,96,0.08); }
+.drop-zone p { color: #888; }
+.drop-zone .big { font-size: 28px; margin: 8px 0; }
+
+.info { font-size: 12px; color: #555; line-height: 1.6; margin-top: 8px; }
+.info b { color: #888; }
+
+.result-section { display: none; }
+.result-section.active { display: block; }
+
+.arrow { text-align: center; font-size: 24px; color: #0f3460; margin: 6px 0; }
+
+.gmap-input { margin-top: 12px; }
+.gmap-input label { display: block; font-size: 13px; color: #aaa; margin-bottom: 6px; }
+.gmap-input input { width: 100%; background: #0a0a1a; border: 1px solid #0f3460; color: #e0e0e0; padding: 10px 12px; border-radius: 6px; font-size: 13px; }
+.gmap-input input:focus { outline: none; border-color: #e94560; }
+.gmap-input .hint { font-size: 11px; color: #555; margin-top: 4px; }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <h1>arnis-jp 座標変換ツール</h1>
+  <p class="subtitle">Minecraft座標 ↔ 実世界座標 ↔ Googleマップ/ストリートビュー</p>
+
+  <!-- File drop -->
+  <div class="drop-zone" id="drop-zone">
+    <p>world_mapping.json をドロップ</p>
+    <p class="big">&#128206;</p>
+    <p style="font-size:12px; color:#555;">セーブフォルダ内にあります</p>
+  </div>
+  <input type="file" id="file-input" accept=".json" hidden>
+
+  <!-- World info -->
+  <div class="card result-section" id="world-info-card">
+    <h2>ワールド情報</h2>
+    <div id="world-info" class="info"></div>
+  </div>
+
+  <!-- MC → Real World -->
+  <div class="card result-section" id="mc-section">
+    <h2>Minecraft → 実世界</h2>
+    <p class="info" style="margin-bottom:10px;">MinecraftでF3を押して座標を確認</p>
+    <div class="row">
+      <label>MC X:</label>
+      <input type="number" id="mc-x" placeholder="F3の X 座標">
+    </div>
+    <div class="row">
+      <label>MC Z:</label>
+      <input type="number" id="mc-z" placeholder="F3の Z 座標">
+    </div>
+    <button class="btn" onclick="mcToReal()">変換</button>
+    <div class="arrow">&#8595;</div>
+    <div class="row">
+      <label>緯度:</label>
+      <input type="text" id="out-lat" readonly>
+    </div>
+    <div class="row">
+      <label>経度:</label>
+      <input type="text" id="out-lng" readonly>
+    </div>
+    <div class="links" id="mc-links" style="display:none;">
+      <a id="mc-gmap" href="#" target="_blank">Googleマップ</a>
+      <a id="mc-sv" href="#" target="_blank" class="sv">ストリートビュー</a>
+    </div>
+  </div>
+
+  <!-- Real → MC (from Google Maps URL or Street View URL) -->
+  <div class="card result-section" id="real-section">
+    <h2>実世界 → Minecraft</h2>
+    <p class="info" style="margin-bottom:10px;">GoogleマップやストリートビューのURLを貼り付け、または緯度経度を直接入力</p>
+
+    <div class="gmap-input">
+      <label>GoogleマップのURL:</label>
+      <input type="text" id="gmap-url" placeholder="https://www.google.com/maps/@35.681,...">
+      <p class="hint">マップやストリートビューの共有URLをそのまま貼り付けてOK</p>
+    </div>
+
+    <button class="btn" onclick="urlToMc()" style="margin-top:10px;">URLから変換</button>
+
+    <div style="text-align:center; color:#555; font-size:12px; margin:12px 0;">── または直接入力 ──</div>
+
+    <div class="row">
+      <label>緯度:</label>
+      <input type="number" step="any" id="in-lat" placeholder="35.6812">
+    </div>
+    <div class="row">
+      <label>経度:</label>
+      <input type="number" step="any" id="in-lng" placeholder="139.7671">
+    </div>
+    <button class="btn" onclick="realToMc()" style="background:#0f3460;">緯度経度から変換</button>
+
+    <div class="arrow">&#8595;</div>
+    <div class="row">
+      <label>MC X:</label>
+      <input type="text" id="out-mc-x" readonly>
+    </div>
+    <div class="row">
+      <label>MC Z:</label>
+      <input type="text" id="out-mc-z" readonly>
+    </div>
+    <div class="row">
+      <label>MC Y:</label>
+      <input type="text" id="out-mc-y" readonly>
+    </div>
+    <div class="info" id="mc-note" style="display:none;"></div>
+  </div>
+
+</div>
+
+<script>
+let mapping = null;
+
+// File handling
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', (e) => { e.preventDefault(); dropZone.classList.remove('dragover'); handleFile(e.dataTransfer.files[0]); });
+fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
+
+function handleFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const data = JSON.parse(e.target.result);
+      if (!data.bbox || !data.scale_factor_x) {
+        alert('world_mapping.json の形式が正しくありません');
+        return;
+      }
+      loadMapping(data);
+    } catch (err) {
+      alert('JSONパースエラー: ' + err.message);
+    }
+  };
+  reader.readAsText(file);
+}
+
+function loadMapping(data) {
+  mapping = data;
+  mapping.max_lat = data.min_lat + data.len_lat;
+  mapping.max_lng = data.min_lng + data.len_lng;
+
+  // Show sections
+  document.querySelectorAll('.result-section').forEach(el => el.classList.add('active'));
+  dropZone.innerHTML = '<p style="color:#4caf50;">&#10003; 読み込み完了</p><p style="font-size:12px;color:#888;margin-top:4px;">別のファイルをドロップで切替</p>';
+
+  // World info
+  const maxX = Math.floor(data.scale_factor_x);
+  const maxZ = Math.floor(data.scale_factor_z);
+  document.getElementById('world-info').innerHTML =
+    `<b>bbox:</b> ${data.bbox[0].toFixed(4)}, ${data.bbox[1].toFixed(4)} ～ ${data.bbox[2].toFixed(4)}, ${data.bbox[3].toFixed(4)}<br>` +
+    `<b>MC範囲:</b> X: 0～${maxX}, Z: 0～${maxZ}<br>` +
+    `<b>ground_level:</b> Y = ${data.ground_level}<br>` +
+    `<b>scale:</b> ${data.scale} blocks/m<br>` +
+    `<b>Googleマップ（全体）:</b> <a href="https://www.google.com/maps/@${((data.min_lat+mapping.max_lat)/2).toFixed(5)},${((data.min_lng+mapping.max_lng)/2).toFixed(5)},17z" target="_blank" style="color:#4fc3f7;">開く</a>`;
+
+  document.getElementById('out-mc-y').value = data.ground_level + 1;
+}
+
+// MC → lat/lng
+function mcToLatLng(x, z) {
+  const relX = x / mapping.scale_factor_x;
+  const relZ = z / mapping.scale_factor_z;
+  const lng = relX * mapping.len_lng + mapping.min_lng;
+  const lat = (1.0 - relZ) * mapping.len_lat + mapping.min_lat;
+  return { lat, lng };
+}
+
+// lat/lng → MC
+function latLngToMc(lat, lng) {
+  const relX = (lng - mapping.min_lng) / mapping.len_lng;
+  const relZ = 1.0 - (lat - mapping.min_lat) / mapping.len_lat;
+  return {
+    x: Math.round(relX * mapping.scale_factor_x),
+    z: Math.round(relZ * mapping.scale_factor_z)
+  };
+}
+
+// MC → Real
+function mcToReal() {
+  if (!mapping) return;
+  const x = parseFloat(document.getElementById('mc-x').value);
+  const z = parseFloat(document.getElementById('mc-z').value);
+  if (isNaN(x) || isNaN(z)) { alert('MC座標を入力してください'); return; }
+
+  const pos = mcToLatLng(x, z);
+  document.getElementById('out-lat').value = pos.lat.toFixed(7);
+  document.getElementById('out-lng').value = pos.lng.toFixed(7);
+
+  document.getElementById('mc-gmap').href =
+    `https://www.google.com/maps/@${pos.lat.toFixed(6)},${pos.lng.toFixed(6)},18z`;
+  document.getElementById('mc-sv').href =
+    `https://www.google.com/maps/@${pos.lat.toFixed(6)},${pos.lng.toFixed(6)},3a,75y,0h,90t/data=!3m1!1e1`;
+  document.getElementById('mc-links').style.display = 'flex';
+}
+
+// Google Maps URL → lat/lng extraction
+function extractLatLngFromUrl(url) {
+  // Pattern 1: @lat,lng,zoom
+  let m = url.match(/@(-?\d+\.?\d*),(-?\d+\.?\d*)/);
+  if (m) return { lat: parseFloat(m[1]), lng: parseFloat(m[2]) };
+
+  // Pattern 2: ?q=lat,lng or ?ll=lat,lng
+  m = url.match(/[?&](?:q|ll|center)=(-?\d+\.?\d*),(-?\d+\.?\d*)/);
+  if (m) return { lat: parseFloat(m[1]), lng: parseFloat(m[2]) };
+
+  // Pattern 3: /place/.../@lat,lng
+  m = url.match(/place\/[^/]*\/@(-?\d+\.?\d*),(-?\d+\.?\d*)/);
+  if (m) return { lat: parseFloat(m[1]), lng: parseFloat(m[2]) };
+
+  // Pattern 4: !3d=lat!4d=lng (Street View embed)
+  m = url.match(/!3d(-?\d+\.?\d*)!4d(-?\d+\.?\d*)/);
+  if (m) return { lat: parseFloat(m[1]), lng: parseFloat(m[2]) };
+
+  return null;
+}
+
+// URL → MC
+function urlToMc() {
+  if (!mapping) return;
+  const url = document.getElementById('gmap-url').value.trim();
+  if (!url) { alert('URLを入力してください'); return; }
+
+  const pos = extractLatLngFromUrl(url);
+  if (!pos) { alert('URLから座標を読み取れませんでした。\nGoogleマップのURLを確認してください。'); return; }
+
+  document.getElementById('in-lat').value = pos.lat.toFixed(7);
+  document.getElementById('in-lng').value = pos.lng.toFixed(7);
+  doRealToMc(pos.lat, pos.lng);
+}
+
+// Real → MC
+function realToMc() {
+  if (!mapping) return;
+  const lat = parseFloat(document.getElementById('in-lat').value);
+  const lng = parseFloat(document.getElementById('in-lng').value);
+  if (isNaN(lat) || isNaN(lng)) { alert('緯度経度を入力してください'); return; }
+  doRealToMc(lat, lng);
+}
+
+function doRealToMc(lat, lng) {
+  const mc = latLngToMc(lat, lng);
+  document.getElementById('out-mc-x').value = mc.x;
+  document.getElementById('out-mc-z').value = mc.z;
+  document.getElementById('out-mc-y').value = mapping.ground_level + 1;
+
+  const note = document.getElementById('mc-note');
+  const inBounds = mc.x >= 0 && mc.x <= mapping.scale_factor_x && mc.z >= 0 && mc.z <= mapping.scale_factor_z;
+  if (!inBounds) {
+    note.style.display = 'block';
+    note.style.color = '#ff9800';
+    note.innerHTML = '&#9888; この座標はワールドの生成範囲外です';
+  } else {
+    note.style.display = 'block';
+    note.style.color = '#4caf50';
+    note.innerHTML = '&#10003; ワールド範囲内です。<br>Minecraftで <b>/tp @s ' + mc.x + ' ' + (mapping.ground_level + 10) + ' ' + mc.z + '</b> でテレポート';
+  }
+}
+
+// Enter key support
+['mc-x', 'mc-z'].forEach(id => {
+  document.getElementById(id).addEventListener('keydown', (e) => { if (e.key === 'Enter') mcToReal(); });
+});
+['in-lat', 'in-lng'].forEach(id => {
+  document.getElementById(id).addEventListener('keydown', (e) => { if (e.key === 'Enter') realToMc(); });
+});
+document.getElementById('gmap-url').addEventListener('keydown', (e) => { if (e.key === 'Enter') urlToMc(); });
+</script>
+</body>
+</html>
