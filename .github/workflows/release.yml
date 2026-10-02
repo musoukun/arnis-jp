@@ -4,6 +4,10 @@ on:
   release:
     types: [created]
 
+# フォークでは GITHUB_TOKEN（既定は読み取りのみ）でリリースに添付するため、書き込み権限が必要
+permissions:
+  contents: write
+
 jobs:
   build:
     strategy:
