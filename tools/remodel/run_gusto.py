@@ -18,6 +18,26 @@ SC = Path(__file__).resolve().parent / "out"  # プレビュー画像の出力�
 SC.mkdir(exist_ok=True)
 geo = OsmGeometry(ROOT / "doc" / "kitahanada" / "osm_data.json")
 site = D.site_cells(geo)
+
+
+def detect_ground(cells) -> int:
+    """建物の外の敷地セルで、一番多い「最上ブロックの Y」を地面とする（地形で場所ごとに変わるため毎回測る）。"""
+    from collections import Counter
+    from parcel import cells_in
+    bld = cells_in(geo.polygon(D.WAY))
+    around = {(x + dx, z + dz) for (x, z) in bld for dx in range(-3, 4) for dz in range(-3, 4)}
+    probe = [c for c in cells if c not in around]
+    xs, zs = [c[0] for c in probe], [c[1] for c in probe]
+    snap = load_area(min(xs), min(zs), max(xs), max(zs), y0=-64, y1=0)
+    top = {}
+    for (x, y, z) in snap.blocks:
+        if (x, z) in probe and y > top.get((x, z), -999):
+            top[(x, z)] = y
+    return Counter(top.values()).most_common(1)[0][0]
+
+
+D.G = detect_ground(site)
+print("地面 G =", D.G)
 con = Construction("gusto_kitahanada", site, y0=D.G, y1=-30)
 # 写真（gasuto.png / sv1）のおおよその撮影位置: 西の歩道、地面から2.5m
 CAMERAS = {

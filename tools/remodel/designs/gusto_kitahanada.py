@@ -22,7 +22,7 @@ import random
 
 from parcel import cells_in, distance_inward, outline
 
-G = -62
+G = -62  # 既定値。run_gusto.py がワールドの地面を測って上書きする
 WAY = 389051949
 LANDUSE = 1052342556
 CANOPY = 881375790  # 地下鉄出入口の屋根（敷地外。触らない）

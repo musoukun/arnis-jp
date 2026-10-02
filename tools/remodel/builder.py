@@ -91,11 +91,23 @@ class Construction:
                 i = j + 1
         # 下から順に置く（支えが要るブロック対策）
         cmds.sort(key=lambda c: int(c.split()[2]))
+        x0, z0, x1, z1 = self.box
+        errors = 0
         with rcon() as m:
-            for c in cmds:
-                r = m.command(c)
-                if "Unknown" in r or "Incorrect" in r or "Expected" in r:
-                    print("RCONエラー:", c, "->", r)
+            # プレイヤーがいないとチャンクが読み込まれず、setblock/fill が失敗するので強制読み込みする
+            m.command(f"forceload add {x0} {z0} {x1} {z1}")
+            time.sleep(2)
+            try:
+                for c in cmds:
+                    r = m.command(c)
+                    if any(w in r for w in ("Unknown", "Incorrect", "Expected", "not loaded", "Could not", "Invalid")):
+                        errors += 1
+                        if errors <= 10:
+                            print("RCONエラー:", c, "->", r)
+            finally:
+                m.command(f"forceload remove {x0} {z0} {x1} {z1}")
+        if errors:
+            raise RuntimeError(f"{errors} 件のコマンドが失敗しました（上のエラーを確認）")
         return len(diff)
 
     def reset(self):
