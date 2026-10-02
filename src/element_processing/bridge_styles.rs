@@ -98,7 +98,8 @@ struct OutlineEntry {
     bridge: Option<String>,
 }
 
-/// Lets a bridge way inherit style tags from an overlapping `man_made=bridge` polygon.
+/// Lets a bridge way inherit style tags from an overlapping `man_made=bridge` polygon, and
+/// reports the outline polygons a structure's decks lie within.
 #[derive(Default)]
 pub struct BridgeOutlineIndex {
     entries: Vec<OutlineEntry>,
@@ -116,20 +117,8 @@ impl BridgeOutlineIndex {
             }
             let structure = w.tags.get("bridge:structure").cloned();
             let bridge = w.tags.get("bridge").cloned();
-            let has_style = structure.is_some()
-                || bridge.as_deref().is_some_and(|v| {
-                    matches!(
-                        v,
-                        "covered"
-                            | "boardwalk"
-                            | "cable-stayed"
-                            | "cable_stayed"
-                            | "suspension"
-                            | "suspension_bridge"
-                            | "truss"
-                    )
-                });
-            if !has_style || w.nodes.len() < 3 {
+            // Plain outlines carry no style, but still mark where the structure ends.
+            if w.nodes.len() < 3 {
                 continue;
             }
             let mut nodes: Vec<(i32, i32)> = w.nodes.iter().map(|n| (n.x, n.z)).collect();
@@ -157,6 +146,24 @@ impl BridgeOutlineIndex {
             });
         }
         Self { entries }
+    }
+
+    /// Outline polygons the way runs inside, judged at the middle of its centerline.
+    pub fn polygons_over(&self, cells: &[(i32, i32)]) -> Vec<&[(i32, i32)]> {
+        let Some(&(x, z)) = cells.get(cells.len() / 2) else {
+            return Vec::new();
+        };
+        self.entries
+            .iter()
+            .filter(|e| {
+                x >= e.bbox_min_x
+                    && x <= e.bbox_max_x
+                    && z >= e.bbox_min_z
+                    && z <= e.bbox_max_z
+                    && point_in_polygon(x, z, &e.nodes)
+            })
+            .map(|e| e.nodes.as_slice())
+            .collect()
     }
 
     pub fn style_for_way(&self, way: &ProcessedWay) -> Option<BridgeStyle> {

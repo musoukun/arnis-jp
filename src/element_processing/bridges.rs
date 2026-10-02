@@ -1,4 +1,5 @@
 use crate::bresenham::bresenham_line;
+use crate::element_processing::bridge_footprint::DeckClip;
 use crate::element_processing::bridge_modules;
 use crate::element_processing::bridge_styles::{
     default_pylons, resolve_bridge_style_with_outline, BridgeOutlineIndex, BridgeStyle,
@@ -8,6 +9,7 @@ use crate::element_processing::railways;
 use crate::osm_parser::{ProcessedElement, ProcessedWay};
 use crate::world_editor::WorldEditor;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 const LAYER_HEIGHT_STEP: i32 = 6;
 const FLAT_TERRAIN_DIP_THRESHOLD: i32 = 4;
@@ -63,6 +65,8 @@ pub struct BridgeMemberInfo {
     pub covered_by_wider: bool,
     // Cable spans: pylon positions from the main span; None stands on piers.
     pub cable_pylons: Option<Vec<(i32, i32)>>,
+    // Module decks of an outlined structure stop at its outline; None leaves them full width.
+    pub deck_clip: Option<Arc<DeckClip>>,
 }
 
 impl BridgeMemberInfo {
@@ -822,6 +826,35 @@ impl BridgeStructureMap {
                 }
             }
 
+            // An outlined structure's module deck must not hang over what runs beside it.
+            let deck_clip = if structure_has_module {
+                let mut polygons: Vec<&[(i32, i32)]> = Vec::new();
+                for member_cells in &cells {
+                    for poly in outlines.polygons_over(member_cells) {
+                        if !polygons.iter().any(|p| std::ptr::eq(*p, poly)) {
+                            polygons.push(poly);
+                        }
+                    }
+                }
+                (!polygons.is_empty()).then(|| {
+                    let roads: Vec<((i32, i32), i32)> = group_indices
+                        .iter()
+                        .zip(&cells)
+                        .flat_map(|(&i, cs)| {
+                            let half = way_half_width(bridge_ways[i], scale);
+                            cs.iter().map(move |&c| (c, half))
+                        })
+                        .collect();
+                    Arc::new(DeckClip::build(
+                        &roads,
+                        &polygons,
+                        bridge_modules::max_module_half_width(),
+                    ))
+                })
+            } else {
+                None
+            };
+
             // Populate per-member info.
             for (m, &idx) in group_indices.iter().enumerate() {
                 let way = bridge_ways[idx];
@@ -852,9 +885,13 @@ impl BridgeStructureMap {
                     let half = module_idx
                         .and_then(bridge_modules::module_half_width)
                         .unwrap_or_else(|| way_half_width(way, scale));
+                    let clip = deck_clip.as_deref().filter(|_| module_idx.is_some());
                     for (&(x, z), &y) in cells[m].iter().zip(&member_ys[m]) {
                         for dx in -half..=half {
                             for dz in -half..=half {
+                                if clip.is_some_and(|c| !c.allows(x + dx, z + dz)) {
+                                    continue;
+                                }
                                 resolved_decks
                                     .entry((x + dx, z + dz))
                                     .and_modify(|e| {
@@ -877,6 +914,7 @@ impl BridgeStructureMap {
                         module_idx,
                         covered_by_wider,
                         cable_pylons: cable_carriers.contains(&idx).then(|| pylon_points.clone()),
+                        deck_clip: deck_clip.clone().filter(|_| module_idx.is_some()),
                     },
                 );
             }
@@ -1181,6 +1219,7 @@ impl BridgeSurfaceMap {
                 .and_then(bridge_modules::module_half_width)
                 .unwrap_or_else(|| highway_block_range(highway_type, &way.tags, scale));
 
+            let clip = member.and_then(|m| m.deck_clip.as_deref());
             let path = way_cells(way);
             let total_bresenham = path.len();
             for (tds, &(cx, cz)) in path.iter().enumerate() {
@@ -1191,6 +1230,9 @@ impl BridgeSurfaceMap {
                 };
                 for dx in -block_range..=block_range {
                     for dz in -block_range..=block_range {
+                        if clip.is_some_and(|c| !c.allows(cx + dx, cz + dz)) {
+                            continue;
+                        }
                         cells
                             .entry((cx + dx, cz + dz))
                             .and_modify(|s| {
@@ -2154,5 +2196,68 @@ mod tests {
         };
         assert_eq!(level(1), level(2));
         assert!(level(1) >= 12);
+    }
+    const OVERPASS_OUTLINE: &[(&str, &str)] = &[
+        ("man_made", "bridge"),
+        ("bridge", "overpass"),
+        ("layer", "1"),
+    ];
+
+    /// Two one-way carriageways 10 apart on a bridge, with an at-grade footway beside them
+    /// (no bridge tag), optionally under an outline polygon that stops short of the footway.
+    fn carriageways_with_grade_footway(outlined: bool) -> (BridgeStructureMap, BridgeSurfaceMap) {
+        let tags = &[
+            ("highway", "primary"),
+            ("bridge", "yes"),
+            ("layer", "1"),
+            ("oneway", "yes"),
+        ];
+        let mut ways = vec![
+            way_with(1, tags, &[(10, 40), (70, 40)]),
+            way_with(2, tags, &[(70, 48), (10, 48)]),
+            way_with(3, &[("highway", "footway")], &[(10, 59), (70, 59)]),
+        ];
+        if outlined {
+            ways.push(way_with(
+                4,
+                OVERPASS_OUTLINE,
+                &[(5, 33), (75, 33), (75, 50), (5, 50), (5, 33)],
+            ));
+        }
+        structures_over(&ways, |_| 0.0)
+    }
+
+    #[test]
+    fn outlined_module_deck_leaves_the_grade_footway_beside_it_alone() {
+        let (structures, surface) = carriageways_with_grade_footway(true);
+
+        let survivor = structures
+            .lookup_member(1)
+            .expect("carriageway is a member");
+        assert!(survivor.module_idx.is_some());
+        assert!(structures.lookup_member(2).unwrap().covered_by_wider);
+        // The footway has no bridge tag, so it is neither a member nor a ramp...
+        assert!(structures.lookup_member(3).is_none());
+        assert!(structures.lookup_ramp(3).is_none());
+        // ...and no deck is stamped over it, so it is placed on the terrain.
+        for x in 20..=60 {
+            assert_eq!(
+                surface.deck_y_at(x, 59),
+                None,
+                "deck over the footway at x={x}"
+            );
+        }
+        // Both carriageways stay decked.
+        for x in 20..=60 {
+            assert!(surface.deck_y_at(x, 40).is_some());
+            assert!(surface.deck_y_at(x, 48).is_some());
+        }
+    }
+
+    #[test]
+    fn unoutlined_module_deck_keeps_its_full_width() {
+        // Without a mapped outline the deck is left as designed, wide enough to cover both.
+        let (_, surface) = carriageways_with_grade_footway(false);
+        assert!(surface.deck_y_at(40, 59).is_some());
     }
 }

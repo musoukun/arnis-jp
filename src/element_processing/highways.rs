@@ -2259,6 +2259,7 @@ fn generate_highways_internal(
                         bridge_surface,
                         &bridge_path,
                         module,
+                        bridge_member.and_then(|m| m.deck_clip.as_deref()),
                     );
                 } else if !bridge_structure_moduled
                     && (bridge_pylons.is_some()
