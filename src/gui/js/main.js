@@ -1,5 +1,15 @@
 import { licenseText } from './license.js';
 import { fetchLanguage, invalidJSON } from './language.js';
+import { renderMarkdown, pickAssetForPlatform } from './update.js';
+import {
+  initSettingsStore,
+  setDynamicDefault,
+  refreshSettingsState,
+  localizeSettingsStore,
+  cancelSettingsResetConfirm,
+  flushSettingsStore,
+} from './settings-store.js';
+import { initSettingsLayout, syncSettingsLayout } from './settings-layout.js';
 
 let invoke;
 if (window.__TAURI__) {
@@ -34,18 +44,34 @@ async function setBboxSelectionInfo(bboxSelectionElement, localizationKey, color
 // Initialize elements and start the demo progress
 window.addEventListener("DOMContentLoaded", async () => {
   registerMessageEvent();
-  window.createWorld = createWorld;
   window.startGeneration = startGeneration;
   setupProgressListener();
   await initSavePath();
   initSettings();
+  // Before the store restores values, so the cards follow the restored ones.
+  initSettingsLayout();
+  initDialogs();
+  initVoxyLightingCoupling();
+  initCavesFillCoupling();
+  refreshHeightLimitRow();
+  // After initSettings(), so the slider label and rotation handlers exist
+  // before restored values are applied. Labels get localized a few lines below.
+  initSettingsStore({ resetWorldFormat: () => setWorldFormat('java') });
+  // The store's restore fired the toggle's change event before the save path
+  // and the world name were known; read the world once more with both in hand.
+  refreshOneWorldState();
+  resolveDefaultSavePath();
   initTelemetryConsent();
+  initClearCacheButton();
+  initPrecomputeFacadesButton();
+  initTooltips();
   handleBboxInput();
   const localization = await getLocalization();
   await applyLocalization(localization);
   updateFormatToggleUI(selectedWorldFormat);
   initFooter();
-  await checkForUpdates();
+  initEasterEggs();
+  checkForUpdates();
 });
 
 // Expose language functions to window for use by language-selector.js
@@ -97,34 +123,14 @@ async function localizeElement(json, elementObject, localizedStringKey) {
 
 async function applyLocalization(localization) {
   const localizationElements = {
-    "span[id='choose_world']": "create_world",
-    "#selected-world": "no_world_selected",
-    "#start-button": "start_generation",
-    "h2[data-localize='customization_settings']": "customization_settings",
-    "span[data-localize='world_scale']": "world_scale",
-    "span[data-localize='custom_bounding_box']": "custom_bounding_box",
+    "#start-button > span[data-localize='start_generation']": "start_generation",
+    "#world-name-label[data-placeholder]": "no_world_generated_yet",
+    "input[id='world-name-input']": "placeholder_world_name",
     // DEPRECATED: Ground level localization removed
     // "label[data-localize='ground_level']": "ground_level",
-    "span[data-localize='language']": "language",
-    "span[data-localize='generation_mode']": "generation_mode",
-    "option[data-localize='mode_geo_terrain']": "mode_geo_terrain",
-    "option[data-localize='mode_geo_only']": "mode_geo_only",
-    "option[data-localize='mode_terrain_only']": "mode_terrain_only",
-    "span[data-localize='terrain']": "terrain",
-    "span[data-localize='interior']": "interior",
-    "span[data-localize='roof']": "roof",
-    "span[data-localize='fillground']": "fillground",
-    "span[data-localize='land_cover']": "land_cover",
-    "span[data-localize='satellite_colors']": "satellite_colors",
-    "span[data-localize='gsi_buildings']": "gsi_buildings",
-    "span[data-localize='map_theme']": "map_theme",
-    "span[data-localize='save_path']": "save_path",
     ".footer-link": "footer_text",
-    "button[data-localize='license_and_credits']": "license_and_credits",
-    "h2[data-localize='license_and_credits']": "license_and_credits",
 
     // Placeholder strings
-    "input[id='world-name-input']": "placeholder_world_name",
     "input[id='bbox-coords']": "placeholder_bbox",
     // DEPRECATED: Ground level placeholder removed
     // "input[id='ground-level']": "placeholder_ground"
@@ -134,6 +140,25 @@ async function applyLocalization(localization) {
     localizeElement(localization, { selector: selector }, localizationElements[selector]);
   }
 
+  // Every text on the settings page and in the dialogs carries its key, and
+  // several appear more than once (a section name is in the sidebar and on the
+  // section itself), so they are localized in one pass rather than selector by
+  // selector.
+  document.querySelectorAll("#settings-modal [data-localize], .dialog [data-localize]").forEach((element) => {
+    localizeElement(localization, { element }, element.dataset.localize);
+  });
+
+  // settings-store.js creates these buttons and owns their text.
+  localizeSettingsStore(localization);
+
+  // arnis-jp: tooltips that carry a localization key (Japan extensions section)
+  document.querySelectorAll("[data-tooltip-key]").forEach((el) => {
+    const key = el.getAttribute("data-tooltip-key");
+    if (localization && localization[key]) {
+      el.setAttribute("data-tooltip", localization[key]);
+    }
+  });
+
   // Re-apply current bbox selection info text with new language
   const bboxSelectionInfo = document.getElementById("bbox-selection-info");
   if (bboxSelectionInfo && currentBboxSelectionKey) {
@@ -141,16 +166,25 @@ async function applyLocalization(localization) {
     bboxSelectionInfo.style.color = currentBboxSelectionColor;
   }
 
-  // Translate tooltips with data-tooltip-key
-  document.querySelectorAll('[data-tooltip-key]').forEach(el => {
-    const key = el.getAttribute('data-tooltip-key');
-    if (localization && localization[key]) {
-      el.setAttribute('data-tooltip', localization[key]);
+  // Update error messages
+  window.localization = localization;
+  renderOneWorldStatus();
+  // The map hint lives in the map iframe, which cannot see this assignment.
+  document.querySelectorAll('iframe').forEach((frame) => {
+    try {
+      const w = frame.contentWindow;
+      if (w && typeof w.renderBboxHint === 'function') w.renderBboxHint();
+      // The toolbar's labels and the search placeholder, same reason.
+      if (w && typeof w.refreshMapToolLabels === 'function') w.refreshMapToolLabels();
+    } catch (_) {
+      // A frame that is not ours or not loaded yet; the hint renders itself
+      // once it is.
     }
   });
 
-  // Update error messages
-  window.localization = localization;
+  // The line above has just written the idle label over a button that may be
+  // saying Cancel, so put the running state back.
+  refreshPrecomputeButton();
 }
 
 // Function to initialize the footer with the current year and version
@@ -178,31 +212,520 @@ async function initFooter() {
     footerElement.textContent = footerText
       .replace("{year}", currentYear)
       .replace("{version}", version);
+
+    // The About section of the settings page repeats the same line.
+    const aboutVersion = document.getElementById("about-version");
+    if (aboutVersion) aboutVersion.textContent = footerElement.textContent;
   }
 }
 
-// Function to check for updates and display a notification if available
+let latestReleaseInfo = null;
+let currentPlatform = "unknown";
+
+const SEEN_VERSION_KEY = "arnis-update-seen-version";
+
+// Only forward http(s)/mailto URLs to the OS handler; reject javascript:/data:/file:/etc.
+function isSafeExternalUrl(url) {
+  return typeof url === "string" && /^(?:https?|mailto):/i.test(url);
+}
+
+async function openExternal(url) {
+  if (!isSafeExternalUrl(url)) {
+    console.warn("Refusing to open URL with disallowed scheme:", url);
+    return;
+  }
+  try {
+    if (window.__TAURI__ && window.__TAURI__.shell && window.__TAURI__.shell.open) {
+      await window.__TAURI__.shell.open(url);
+    } else {
+      window.open(url, "_blank", "noopener,noreferrer");
+    }
+  } catch (err) {
+    console.error("Failed to open URL:", url, err);
+  }
+}
+
 async function checkForUpdates() {
   try {
-    const isUpdateAvailable = await invoke('gui_check_for_updates');
-    if (isUpdateAvailable) {
-      const footer = document.querySelector(".footer");
-      const updateMessage = document.createElement("a");
-      updateMessage.href = "https://github.com/musoukun/arnis-jp/releases";
-      updateMessage.target = "_blank";
-      updateMessage.style.color = "#fecc44";
-      updateMessage.style.marginTop = "-5px";
-      updateMessage.style.fontSize = "0.95em";
-      updateMessage.style.display = "block";
-      updateMessage.style.textDecoration = "none";
+    const [info, platform] = await Promise.all([
+      invoke("gui_get_update_info"),
+      invoke("gui_get_platform"),
+    ]);
+    latestReleaseInfo = info;
+    currentPlatform = platform || "unknown";
+    if (!info || !info.isNewer) return;
 
-      localizeElement(window.localization, { element: updateMessage }, "new_version_available");
-      footer.style.marginTop = "10px";
-      footer.appendChild(updateMessage);
+    const footer = document.querySelector(".footer");
+    const updateMessage = document.createElement("span");
+    updateMessage.setAttribute("role", "button");
+    updateMessage.setAttribute("tabindex", "0");
+    updateMessage.style.color = "#fecc44";
+    updateMessage.style.marginTop = "-5px";
+    updateMessage.style.fontSize = "0.95em";
+    updateMessage.style.display = "block";
+    updateMessage.style.cursor = "pointer";
+    updateMessage.addEventListener("click", () => openUpdateModal());
+    updateMessage.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        openUpdateModal();
+      }
+    });
+    localizeElement(window.localization, { element: updateMessage }, "new_version_available");
+    footer.style.marginTop = "10px";
+    footer.appendChild(updateMessage);
+
+    // Auto-open once per new remote version; "seen" key records the last auto-shown version.
+    const seen = localStorage.getItem(SEEN_VERSION_KEY);
+    if (seen !== info.remoteVersion) {
+      openUpdateModal();
     }
   } catch (error) {
     console.error("Failed to check for updates: ", error);
   }
+}
+
+function openUpdateModal(opts = {}) {
+  const info = latestReleaseInfo;
+  // Version info opened from Settings only reads, unless the release it shows
+  // is newer than this build: then the download is offered there as well.
+  const showDownload =
+    opts.showDownload !== false || !!(info && info.release && info.isNewer);
+  const modal = document.getElementById("update-modal");
+  if (!modal) return;
+  const titleEl = document.getElementById("update-modal-title");
+  const bodyEl = document.getElementById("update-modal-body");
+  const downloadBtn = document.getElementById("update-download-button");
+  const downloadNote = document.getElementById("update-modal-download-note");
+
+  // Hide download button + the "opens in your browser" note in version-info mode.
+  if (downloadBtn) downloadBtn.style.display = showDownload ? "" : "none";
+  if (downloadNote) downloadNote.style.display = showDownload ? "" : "none";
+
+  const metaEl = document.getElementById("update-modal-meta");
+
+  if (!info || !info.release) {
+    titleEl.textContent =
+      (window.localization && window.localization.update_modal_title) || "What's new in Arnis";
+    if (metaEl) metaEl.replaceChildren();
+    const fallbackMsg =
+      (window.localization && window.localization.update_fetch_failed) ||
+      "Could not fetch the latest release information. Please check your internet connection or visit GitHub directly.";
+    bodyEl.innerHTML = `<p>${escapeHTMLLite(fallbackMsg)}</p>`;
+    if (downloadBtn) downloadBtn.disabled = true;
+    showModal(modal);
+    return;
+  }
+  const rel = info.release;
+
+  titleEl.textContent = (rel.name && rel.name.trim()) || rel.tag_name || "Latest release";
+  renderReleaseMeta(metaEl, info, rel);
+  bodyEl.innerHTML = renderMarkdown(rel.body || "");
+  bodyEl.scrollTop = 0;
+  bodyEl.querySelectorAll("a[href]").forEach((a) => {
+    const href = a.getAttribute("href");
+    if (!href) return;
+    a.addEventListener("click", (e) => {
+      e.preventDefault();
+      openExternal(href);
+    });
+  });
+
+  if (downloadBtn && showDownload) {
+    const asset = pickAssetForPlatform(rel.assets || [], currentPlatform);
+    downloadBtn.disabled = false;
+    // Only the label: the button also holds its icon.
+    const label = downloadBtn.querySelector(".dialog-button-label") || downloadBtn;
+    label.textContent =
+      (window.localization && window.localization.update_download) || "Download";
+    downloadBtn.dataset.downloadUrl = asset ? asset.browser_download_url : rel.html_url;
+  }
+
+  // "Seen" gate only applies to auto-open of a newer release, not manual version-info clicks.
+  if (info.isNewer && showDownload) {
+    try { localStorage.setItem(SEEN_VERSION_KEY, info.remoteVersion); } catch (_) {}
+  }
+
+  showModal(modal);
+}
+
+async function openVersionInfoModal() {
+  if (!latestReleaseInfo) {
+    try {
+      latestReleaseInfo = await invoke("gui_get_update_info");
+    } catch (e) {
+      console.error("Failed to fetch release info:", e);
+    }
+  }
+  openUpdateModal({ showDownload: false });
+}
+
+// The line under the release title: its date, then the version, or
+// "3.2.0 → 3.3.0" when it is newer than this build. A localized date and
+// numbers only, so nothing here needs a translation.
+function renderReleaseMeta(metaEl, info, rel) {
+  if (!metaEl) return;
+  metaEl.replaceChildren();
+  const parts = [];
+  const date = formatReleaseDate(rel.published_at);
+  if (date) parts.push(document.createTextNode(date));
+
+  const plain = (v) => String(v || "").replace(/^v/i, "");
+  const remote = plain(info.remoteVersion || rel.tag_name);
+  if (info.isNewer && info.localVersion && remote) {
+    const version = document.createElement("span");
+    const newer = document.createElement("span");
+    newer.className = "is-new";
+    newer.textContent = remote;
+    version.append(`${plain(info.localVersion)} → `, newer);
+    parts.push(version);
+  } else if (remote) {
+    parts.push(document.createTextNode(remote));
+  }
+
+  parts.forEach((part, i) => {
+    if (i > 0) metaEl.append(" · ");
+    metaEl.append(part);
+  });
+}
+
+// The interface language as a locale for dates and numbers, rather than the
+// system one.
+function interfaceLocale() {
+  const lang = localStorage.getItem("arnis-language") || navigator.language;
+  // Arnis files Ukrainian under "ua"; the language tag is "uk".
+  return lang === "ua" ? "uk" : lang;
+}
+
+function formatReleaseDate(iso) {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  try {
+    return new Intl.DateTimeFormat(interfaceLocale(), { dateStyle: "long" }).format(date);
+  } catch (_) {
+    return date.toDateString();
+  }
+}
+
+function closeUpdateModal() {
+  const modal = document.getElementById("update-modal");
+  if (modal) hideModal(modal);
+}
+
+// Where focus returns to once a dialog closes.
+const modalReturnFocus = new WeakMap();
+
+// Shows a dialog's backdrop and moves focus onto the dialog, so the keyboard
+// acts on it rather than on whatever is behind.
+function showModal(modal) {
+  if (modal.style.display !== "flex") {
+    modalReturnFocus.set(modal, document.activeElement);
+  }
+  modal.style.display = "flex";
+  modal.style.justifyContent = "center";
+  modal.style.alignItems = "center";
+  const dialog = modal.querySelector(".dialog");
+  if (dialog) dialog.focus({ preventScroll: true });
+}
+
+function hideModal(modal) {
+  modal.style.display = "none";
+  const back = modalReturnFocus.get(modal);
+  modalReturnFocus.delete(modal);
+  if (back && document.contains(back) && typeof back.focus === "function") {
+    back.focus({ preventScroll: true });
+  }
+}
+
+// A click on the backdrop closes the dialog, but only when the press started
+// there too: selecting text inside and letting go outside must not close it.
+function closeOnBackdrop(modal, close) {
+  let pressedOnBackdrop = false;
+  modal.addEventListener("pointerdown", (event) => {
+    pressedOnBackdrop = event.target === modal;
+  });
+  modal.addEventListener("click", (event) => {
+    if (pressedOnBackdrop && event.target === modal) close();
+    pressedOnBackdrop = false;
+  });
+}
+
+// License, version info and the 3D preview are read-only, so a click beside
+// them may close them. The consent dialog is left alone: it wants an answer.
+function initDialogs() {
+  const license = document.getElementById("license-modal");
+  const update = document.getElementById("update-modal");
+  const preview3d = document.getElementById("preview3d-modal");
+  if (license) closeOnBackdrop(license, () => window.closeLicense());
+  if (update) closeOnBackdrop(update, closeUpdateModal);
+  if (preview3d) closeOnBackdrop(preview3d, () => window.closePreview3D && window.closePreview3D());
+}
+
+function openUpdateInBrowser() {
+  const url =
+    (latestReleaseInfo && latestReleaseInfo.release && latestReleaseInfo.release.html_url) ||
+    "https://github.com/musoukun/arnis-jp/releases";
+  openExternal(url);
+}
+
+function downloadLatestRelease() {
+  const btn = document.getElementById("update-download-button");
+  const url = btn && btn.dataset.downloadUrl;
+  if (!url) return;
+  openExternal(url);
+}
+
+function escapeHTMLLite(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+window.openUpdateModal = openUpdateModal;
+window.openVersionInfoModal = openVersionInfoModal;
+window.closeUpdateModal = closeUpdateModal;
+window.openUpdateInBrowser = openUpdateInBrowser;
+window.downloadLatestRelease = downloadLatestRelease;
+
+// Earth on every start, so a Moon or Mars world stays a deliberate pick.
+var selectedCelestialBody = 'earth';
+
+// Earth-only options. Disabled rather than hidden, so it does not look like
+// they were silently ignored.
+const EARTH_ONLY_SETTINGS = [
+  'generation-mode-select',
+  'overture-toggle',
+  'use-3d-toggle',
+  'interior-toggle',
+  'canopy-height-toggle',
+  'legacy-trees-toggle',
+  'scale-value-slider',
+  'aws-only-elevation-toggle',
+  'disable-height-limit-toggle',
+  // Off Earth the body's own imagery is the only basemap, so neither the
+  // Earth theme picker nor a custom Earth tile source has anything to act on.
+  'tile-theme-select',
+  'custom-tile-url'
+];
+const EARTH_ONLY_SEGMENTED = ['max-tree-size-group', 'signage-group'];
+
+// A tile URL template Leaflet can actually fill in. Deliberately permissive
+// about the host - the entire point is to reach something we do not know about -
+// but the placeholders have to be there or every tile 404s.
+function isValidTileTemplate(url) {
+  if (!/^https?:\/\//i.test(url)) return false;
+  return url.includes('{z}') && url.includes('{x}') && url.includes('{y}');
+}
+
+function getCustomTileUrl() {
+  return (localStorage.getItem('customTileUrl') || '').trim();
+}
+
+function getMapillaryToken() {
+  return (localStorage.getItem('mapillaryToken') || '').trim();
+}
+
+function getFacadeMode() {
+  const stored = localStorage.getItem('facadeMode');
+  if (stored === 'blocks') return 'blocks';
+  // Anything else means the photographs: 'photos' itself, the 'paintings' and
+  // 'paintings-v2' an earlier build saved for what are now the photo panels,
+  // and nothing at all, which takes the default the same way the backend does.
+  return 'photos';
+}
+
+// The photo panels are Java entities carried by a resource pack, so no other
+// world format can show them. The stored choice is left alone so that going
+// back to Java restores it; only what the backend is asked for changes.
+function getEffectiveFacadeMode() {
+  const mode = getFacadeMode();
+  if (mode !== 'blocks' && selectedWorldFormat !== 'java') return 'blocks';
+  return mode;
+}
+
+// One control decides where facades come from, so the two old switches are
+// gone: they were mutually exclusive anyway and could both be off in two
+// different ways. Java only, and the stored choice survives a trip through
+// Bedrock so coming back restores it.
+function getFacadeSource() {
+  const v = localStorage.getItem('facadeSource');
+  return v === 'preset' || v === 'mapillary' ? v : 'off';
+}
+
+// Only the presets are Java only. Mapillary falls back to block facades on
+// Bedrock and Luanti, which is what the notice under the mode control says.
+// The Moon and Mars are terrain only, so there is no wall to hang anything on
+// and every source resolves to off there. As with the format gate, the stored
+// choice is left alone so coming back to Earth restores it.
+function getEffectiveFacadeSource() {
+  const source = getFacadeSource();
+  if (selectedCelestialBody !== 'earth') return 'off';
+  if (source === 'preset' && selectedWorldFormat !== 'java') return 'off';
+  return source;
+}
+
+function getFacadesEnabled() {
+  return getEffectiveFacadeSource() === 'mapillary';
+}
+
+function getBuildingFacadesEnabled() {
+  return getEffectiveFacadeSource() === 'preset';
+}
+
+function getFacadeDetail() {
+  return localStorage.getItem('facadeDetail') === 'high' ? 'high' : 'standard';
+}
+
+// Every row under the source control only means something for one of the
+// sources, so each is greyed by the source rather than by a switch of its own.
+function refreshFacadeSourceRows() {
+  const group = document.getElementById('facade-source-group');
+  if (!group) return;
+  const java = selectedWorldFormat === 'java';
+  const earth = selectedCelestialBody === 'earth';
+  const source = getEffectiveFacadeSource();
+
+  // Off Earth the whole section is dead, the source picker included, so it is
+  // greyed like the row it sits in rather than left looking live.
+  group.classList.toggle('segmented-disabled', !earth);
+  const sourceRow = group.closest('.settings-row');
+  if (sourceRow) sourceRow.classList.toggle('settings-row-unavailable', !earth);
+  group.querySelectorAll('.segment').forEach((btn) => {
+    btn.disabled = !earth || (!java && btn.dataset.facadeSource === 'preset');
+    btn.classList.toggle('active', btn.dataset.facadeSource === source);
+  });
+
+  // A row that belongs to another source is hidden: it has nothing to say
+  // until that source is picked, and the whole Mapillary block greyed out
+  // under Off only buried the rest of the page. A row that belongs to this
+  // source but cannot act yet (no token, wrong format) is greyed instead, so
+  // it is still there to explain itself.
+  const grey = (id, shown, live) => {
+    const el = document.getElementById(id);
+    const row = el && el.closest('.settings-row');
+    if (row) {
+      row.style.display = shown ? '' : 'none';
+      row.classList.toggle('settings-row-unavailable', !live);
+    }
+    if (el) {
+      el.querySelectorAll('.segment, input, button').forEach((c) => {
+        c.disabled = !live;
+      });
+      if (el.tagName === 'INPUT' || el.tagName === 'BUTTON') el.disabled = !live;
+    }
+  };
+  const mapillary = source === 'mapillary';
+  const token = !!getMapillaryToken();
+  grey('mapillary-token', mapillary, mapillary);
+  grey('facade-mode-group', mapillary, mapillary && token);
+  // Panel resolution, so it means nothing where no panels are hung.
+  grey('facade-detail-group', source !== 'off', source !== 'off' && java);
+  grey('precompute-facades-button', mapillary, mapillary && token);
+
+  const notice = document.getElementById('facade-java-only-notice');
+  if (notice) notice.style.display = java ? 'none' : '';
+}
+
+// The facade rows react to the world format (panels are Java only), the on/off
+// switch and the token. A row that cannot do anything is greyed out rather than
+// left looking live, and the Precompute button reads the same facts.
+function refreshFacadeRows() {
+  const group = document.getElementById('facade-mode-group');
+  const notice = document.getElementById('facade-java-only-notice');
+  if (!group) return;
+
+  const java = selectedWorldFormat === 'java';
+  const earth = selectedCelestialBody === 'earth';
+  const effective = getEffectiveFacadeMode();
+  group.querySelectorAll('.segment').forEach((btn) => {
+    const panels = btn.dataset.facadeMode !== 'blocks';
+    btn.disabled = panels && !java;
+    btn.classList.toggle('active', btn.dataset.facadeMode === effective);
+  });
+  // Off Earth nothing builds facades at all, so the format gate has nothing
+  // left to explain.
+  if (notice) notice.style.display = java || !earth ? 'none' : '';
+  refreshFacadeSourceRows();
+  refreshPrecomputeButton();
+}
+
+// The URL field is only meaningful for the Custom theme, so it is hidden
+// rather than disabled for every other one.
+function refreshCustomSourceRow() {
+  const select = document.getElementById('tile-theme-select');
+  const row = document.getElementById('custom-tile-row');
+  if (!select || !row) return;
+  row.style.display = select.value === 'custom' ? '' : 'none';
+}
+
+// The map iframe is addressed by class, never by its src attribute. Manual
+// bbox entry used to rewrite src to "maps.html#lat,lng,lat,lng", after which
+// every iframe[src="maps.html"] lookup silently matched nothing and the map
+// theme and celestial body messages were dropped for the rest of the session.
+function getMapFrame() {
+  return document.querySelector('.map-container');
+}
+
+// The map owns the toggle, but an iframe reload restarts it on Earth, so the
+// parent's value has to be pushed back.
+function pushBodyToMap() {
+  const mapIframe = getMapFrame();
+  if (mapIframe && mapIframe.contentWindow) {
+    mapIframe.contentWindow.postMessage(
+      { type: 'changeBody', body: selectedCelestialBody },
+      '*'
+    );
+  }
+}
+
+function setCelestialBody(body) {
+  selectedCelestialBody = (body === 'moon' || body === 'mars') ? body : 'earth';
+  const off = selectedCelestialBody !== 'earth';
+
+  const markRow = (el) => {
+    const row = el && el.closest('.settings-row');
+    if (row) row.classList.toggle('settings-row-unavailable', off);
+  };
+
+  EARTH_ONLY_SETTINGS.forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.disabled = off;
+    markRow(el);
+  });
+
+  EARTH_ONLY_SEGMENTED.forEach((id) => {
+    const group = document.getElementById(id);
+    if (!group) return;
+    group.classList.toggle('segmented-disabled', off);
+    markRow(group);
+  });
+
+  // Gated on more than the body, so they cannot simply follow the earth-only
+  // loop: the height-limit pack is also format-gated and the facade rows read
+  // the world format and the stored source too.
+  refreshHeightLimitRow();
+  refreshFacadeRows();
+  refreshOneWorldState();
+
+  // A default, not a lock. Slider units are clock minutes: 0 midnight, 720 noon.
+  const timeSlider = document.getElementById('world-time-slider');
+  if (timeSlider) {
+    timeSlider.value = off ? 0 : 720;
+    timeSlider.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  // The cached preview describes a world on the body we just left. The map
+  // clears its own overlay in changeBody; this drops the parent's copy so a
+  // later ready event cannot put a stale one back.
+  currentWorldMapData = null;
+
+  // Warnings are per body, so the current selection may read differently now.
+  refreshBboxSelectionInfo();
 }
 
 // Function to register the event listener for bbox updates from iframe
@@ -210,11 +733,280 @@ function registerMessageEvent() {
   window.addEventListener('message', function (event) {
     const bboxText = event.data.bboxText;
 
-    if (bboxText) {
+    // Typed messages are handled below; only untyped bboxText messages are
+    // selection updates (typed ones carrying coordinates must not be).
+    if (bboxText && !event.data.type) {
       console.log("Updated BBOX Coordinates:", bboxText);
       displayBboxInfoText(bboxText);
     }
+
+    // World toggled on the map toolbar
+    if (event.data && event.data.type === 'bodyChanged') {
+      setCelestialBody(event.data.body);
+    }
+
+    // Handle angle measurement from the map polyline tool
+    if (event.data && event.data.type === 'angleMeasured') {
+      // A One World is aligned to real coordinates; the tool is disabled on
+      // the map too, this only covers a measurement already in flight.
+      if (isOneWorldEnabled()) return;
+      var angle = event.data.angle;
+      var rotationInput = document.getElementById("rotation-angle-input");
+      if (rotationInput) {
+        var clamped = Math.min(Math.max(angle, -90), 90);
+        rotationInput.value = clamped.toFixed(2);
+        // Also trigger the rotation preview update on the map
+        var mapFrame = document.querySelector('.map-container');
+        if (mapFrame && mapFrame.contentWindow) {
+          mapFrame.contentWindow.postMessage({
+            type: 'rotatePreview',
+            angle: clamped
+          }, '*');
+        }
+      }
+    }
   });
+}
+
+// --- Self-calibrating, phase-aware ETA ------------------------------------
+// The single 0-100% progress is non-linear in time: it has fixed phase
+// breakpoints and the post-70% tail is ~instant under stream-to-disk but a real
+// save otherwise. So we model three time-bands, extrapolate the CURRENT band to
+// its own end from a least-squares rate, and budget the remaining bands via
+// per-regime time weights calibrated to this run. The backend tells us the
+// streaming regime via an optional `streaming` field (absent => non-streaming).
+// Starts once generation begins (progress >= ETA_START, downloads done) and
+// ticks down once a second so it reads like a live countdown.
+const ETA_START = 20; // generation/terrain begins here, downloads done
+const ETA_WINDOW_MS = 16000; // sliding window for the rate (wider = steadier)
+const ETA_MIN_MS = 700; // min window span before trusting a rate
+const ETA_MIN_SAMPLES = 4; // keep at least this many samples in the window
+const ETA_STALL_MS = 1500; // progress flat this long => freeze belief, keep ticking
+const ETA_MAX_S = 24 * 3600; // ignore absurd extrapolations
+const ETA_A_DOWN = 0.28; // smoothing when the estimate falls (gentle)
+const ETA_A_UP = 0.1; // smoothing when it rises (resist, stay calm)
+const ETA_RISE_ABS = 2; // shown rises by at most max(2s, 10%) per update
+const ETA_RISE_FRAC = 0.1; // => smooth, monotonic-feeling countdown
+
+// Progress bands [lo, hi) and per-regime RELATIVE time weights (not % widths).
+// Measured on Heidelberg 1/2.5/5/10 km runs (terrain + land cover + Overture):
+// the finalize tail (map item, signage map tiles, world settings) is as long as
+// the region write on small areas and several times longer on large ones, so it
+// gets its own band rather than hiding behind the last save percent.
+const ETA_PHASES = [
+  { id: "terrain", lo: 20, hi: 70 },
+  { id: "ground", lo: 70, hi: 90 },
+  { id: "save", lo: 90, hi: 97 },
+  { id: "finalize", lo: 97, hi: 100 },
+];
+const ETA_WPRIOR = {
+  nonStreaming: [37, 2, 11, 20],
+  streaming: [60, 0.3, 0.5, 3.0],
+};
+// Signage map tiles are what makes the finalize band long, and they are Java-only.
+// Without them the tail is just the map item and level.dat settings.
+const ETA_WFINALIZE_NO_SIGNAGE = 1.5;
+
+let eta = null;
+// Set from the generate handler; decides the finalize weight for the next run.
+let etaSignageExpected = true;
+
+function setEtaSignageExpected(expected) {
+  etaSignageExpected = !!expected;
+}
+
+// Copy of the regime prior with the finalize weight adjusted for this run.
+function etaWeightsFor(streaming) {
+  const w = (streaming ? ETA_WPRIOR.streaming : ETA_WPRIOR.nonStreaming).slice();
+  if (!etaSignageExpected) w[3] = ETA_WFINALIZE_NO_SIGNAGE;
+  return w;
+}
+
+function etaPhaseIdx(p) {
+  for (let i = 0; i < ETA_PHASES.length; i++) if (p < ETA_PHASES[i].hi) return i;
+  return ETA_PHASES.length - 1;
+}
+
+// Least-squares slope of progress over the window -> %/sec (null if not rising).
+function etaLsRate(s) {
+  const n = s.length;
+  if (n < 2) return null;
+  let st = 0, sp = 0;
+  for (const x of s) { st += x.t; sp += x.p; }
+  const mt = st / n, mp = sp / n;
+  let num = 0, den = 0;
+  for (const x of s) { const d = x.t - mt; num += d * (x.p - mp); den += d * d; }
+  if (den <= 0) return null;
+  const slope = num / den;
+  return slope > 0 ? slope * 1000 : null;
+}
+
+function resetEta() {
+  if (eta && eta.tickHandle) clearInterval(eta.tickHandle);
+  eta = null;
+  const el = document.getElementById("progress-eta");
+  if (el) {
+    el.classList.remove("visible");
+    el.textContent = "";
+    el.removeAttribute("aria-label");
+  }
+}
+
+function formatEtaDuration(sec) {
+  sec = Math.max(0, Math.round(sec));
+  if (sec < 60) return `${sec}s`;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  if (m < 60) return s ? `${m}m ${s}s` : `${m}m`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
+}
+
+function renderEta() {
+  const el = document.getElementById("progress-eta");
+  if (!el) return;
+  // Show nothing until we actually have an estimate (no "…" placeholder).
+  if (!eta || eta.shown == null) {
+    el.classList.remove("visible");
+    el.textContent = "";
+    el.removeAttribute("aria-label");
+    return;
+  }
+  // Floor at 1s so it never reads "0s" before Done.
+  const value = formatEtaDuration(Math.max(1, eta.shown));
+  el.textContent = value; // duration only on the bar; no "~" prefix
+  // Screen-reader context (the visible pill is just the duration). Hardcoded
+  // English to match the rest of the progress messages, which aren't localized.
+  el.setAttribute("aria-label", `Time remaining: ${value}`);
+  el.classList.add("visible");
+}
+
+// Two-layer display: `est` is the belief, `shown` follows it but falls freely
+// and rises slowly, so the countdown never jumps upward jarringly.
+function etaReconcile() {
+  if (!eta || eta.est == null) return;
+  if (eta.shown == null || eta.est <= eta.shown) eta.shown = eta.est;
+  else
+    eta.shown = Math.min(
+      eta.est,
+      eta.shown + Math.max(ETA_RISE_ABS, eta.shown * ETA_RISE_FRAC)
+    );
+}
+
+// Counts the value down between progress events (and through the 70% stall).
+function etaTick() {
+  if (!eta || eta.est == null) return;
+  const now = performance.now();
+  const dt = (now - eta.lastTickAt) / 1000;
+  eta.lastTickAt = now;
+  eta.est = Math.max(0, eta.est - dt);
+  if (eta.shown != null) eta.shown = Math.max(0, eta.shown - dt);
+  etaReconcile();
+  renderEta();
+}
+
+function updateEta(progress, streaming) {
+  // Reset before the generation phases and once finished / on a new run.
+  if (progress < ETA_START || progress >= 100) {
+    resetEta();
+    return;
+  }
+  const now = performance.now();
+  if (!eta) {
+    eta = {
+      streamingKnown: false, wprior: etaWeightsFor(false), phaseIdx: -1,
+      phaseStartT: now, phaseStartProgress: null, movedInPhase: false,
+      samples: [], doneSec: 0, doneWeight: 0, est: null, shown: null,
+      lastTickAt: now, lastProgress: null, lastIncreaseAt: now, tickHandle: null,
+    };
+  }
+  if (streaming != null && !eta.streamingKnown) {
+    eta.streamingKnown = true;
+    eta.wprior = etaWeightsFor(streaming);
+  }
+
+  const idx = etaPhaseIdx(progress), ph = ETA_PHASES[idx];
+  if (idx !== eta.phaseIdx) {
+    // Bank the real duration (incl. any stall) of the phase we just left.
+    if (eta.phaseIdx >= 0) {
+      eta.doneSec += (now - eta.phaseStartT) / 1000;
+      eta.doneWeight += eta.wprior[eta.phaseIdx];
+      for (let k = eta.phaseIdx + 1; k < idx; k++) eta.doneWeight += eta.wprior[k];
+    }
+    eta.phaseIdx = idx;
+    eta.phaseStartT = now;
+    eta.samples = [];
+    eta.phaseStartProgress = progress;
+    eta.movedInPhase = false;
+  }
+
+  if (eta.lastProgress == null || progress > eta.lastProgress) eta.lastIncreaseAt = now;
+  eta.lastProgress = progress;
+  const stalled = now - eta.lastIncreaseAt > ETA_STALL_MS;
+
+  eta.samples.push({ t: now, p: progress });
+  // Drop the flat phase-start hold (e.g. precompute sitting at 25%) the first
+  // time progress actually moves, so the rate reflects real work, not setup.
+  if (!eta.movedInPhase && eta.phaseStartProgress != null && progress > eta.phaseStartProgress) {
+    eta.samples = [{ t: now, p: progress }];
+    eta.movedInPhase = true;
+  }
+  const cut = now - ETA_WINDOW_MS;
+  while (eta.samples.length > ETA_MIN_SAMPLES && eta.samples[0].t < cut) eta.samples.shift();
+  const span = now - eta.samples[0].t;
+  const rate = !stalled && span >= ETA_MIN_MS ? etaLsRate(eta.samples) : null;
+
+  const phaseElapsed = (now - eta.phaseStartT) / 1000;
+  let G = eta.doneWeight > 0 ? eta.doneSec / eta.doneWeight : null; // sec per prior-unit
+  let remCur = null;
+  if (rate) remCur = (ph.hi - progress) / rate;
+  else if (G != null) remCur = ((ph.hi - progress) / (ph.hi - ph.lo)) * eta.wprior[idx] * G;
+  if (G == null && remCur != null) G = (phaseElapsed + remCur) / eta.wprior[idx];
+  if (G != null) G = Math.min(1000, Math.max(0.02, G));
+
+  let raw = null;
+  if (remCur != null) {
+    // In the last band this is just the measured rate; earlier ones budget the rest.
+    raw = Math.max(0, remCur);
+    if (G != null) for (let j = idx + 1; j < ETA_PHASES.length; j++) raw += eta.wprior[j] * G;
+  }
+
+  if (!stalled && raw != null && isFinite(raw) && raw <= ETA_MAX_S) {
+    const a = eta.est == null || raw <= eta.est ? ETA_A_DOWN : ETA_A_UP;
+    eta.est = eta.est == null ? raw : a * raw + (1 - a) * eta.est;
+    eta.lastTickAt = now;
+  }
+  if (eta.est != null && !eta.tickHandle) {
+    eta.lastTickAt = now;
+    eta.tickHandle = setInterval(etaTick, 1000);
+  }
+  etaReconcile();
+  renderEta();
+}
+
+// What the status line says between the click and the backend's first real
+// progress event. Kept in a constant because the abort paths have to be able to
+// recognize it as still-unclaimed and take it back down.
+const STARTING_MESSAGE = "Starting...";
+
+// The bar and the status line only ever move on a `progress-update` event, and
+// the first one is a long way from the click: a world folder gets created, a
+// spawn point written into level.dat, a datapack possibly installed, disk space
+// probed and a session lock taken, all before the download that emits 1%. Until
+// then the previous run's green "Done!" and full bar sit there, which reads as
+// the button having done nothing. So claim both here, at the moment the click
+// is accepted, and let the first real update take over from 0%.
+function resetProgressUi(message) {
+  const bar = document.getElementById("progress-bar");
+  const info = document.getElementById("progress-info");
+  const detail = document.getElementById("progress-detail");
+  if (bar) bar.style.width = "0%";
+  if (detail) detail.textContent = "0%";
+  if (info) {
+    info.textContent = message;
+    info.style.color = "#ececec";
+  }
+  resetEta();
 }
 
 // Function to set up the progress bar listener
@@ -224,11 +1016,12 @@ function setupProgressListener() {
   const progressDetail = document.getElementById("progress-detail");
 
   window.__TAURI__.event.listen("progress-update", (event) => {
-    const { progress, message } = event.payload;
+    const { progress, message, streaming } = event.payload;
 
     if (progress != -1) {
       progressBar.style.width = `${progress}%`;
       progressDetail.textContent = `${Math.round(progress)}%`;
+      updateEta(progress, streaming);
     }
 
     if (message != "") {
@@ -236,13 +1029,42 @@ function setupProgressListener() {
 
       if (message.startsWith("Error!")) {
         progressInfo.style.color = "#fa7878";
-        generationButtonEnabled = true;
+        setGenerationButtonEnabled(true);
+        window.arnisPreview3D?.setGenerationRunning(false);
+        if (lastRunOneWorld) {
+          // The world keeps its name; the status line carries the reason.
+          setWorldNameLabel(oneWorldDisplayName());
+          if (isOneWorldEnabled()) setOneWorldStatus(message.replace(/^Error!\s*/, ''), 'error');
+        } else {
+          setWorldNameLabel("");
+        }
+        resetEta();
       } else if (message.startsWith("Done!")) {
         progressInfo.style.color = "#7bd864";
-        generationButtonEnabled = true;
+        setGenerationButtonEnabled(true);
+        window.arnisPreview3D?.setGenerationRunning(false);
+        resetEta();
+        // The world just grew by one area: reload its status and overlays.
+        if (lastRunOneWorld) {
+          oneWorldOverlayKey = null;
+          refreshOneWorldState();
+        }
+        // A generation just built facades into the same cache, so the preview
+        // has something new to say.
+        window.arnisPreview3D?.refreshFacades();
       } else {
         progressInfo.style.color = "#ececec";
       }
+      // The facade pipeline reports its stages here whichever job is driving it.
+      notePrecomputeStage(message);
+    }
+  });
+
+  // Listen for the finalized world name (Java adds the localized area suffix
+  // during generation; Bedrock derives the name from the area up-front).
+  window.__TAURI__.event.listen("world-name-update", (event) => {
+    if (typeof event.payload === 'string') {
+      setWorldNameLabel(event.payload);
     }
   });
 
@@ -263,48 +1085,245 @@ function setupProgressListener() {
   });
 }
 
+// Easter eggs
+function showEasterEggAnimal() {
+  const img = document.getElementById('secret-parrot');
+  img.src = './images/parrot.gif';
+  img.style.display = 'inline';
+}
+
+function initEasterEggs() {
+  // 1 in 50 chance at startup
+  if (Math.random() < 1 / 50) {
+    showEasterEggAnimal();
+  }
+
+  // 5 rapid clicks on progress bar
+  const progressBar = document.querySelector('.progress-bar-container');
+  let clicks = [];
+  progressBar.addEventListener('click', () => {
+    const now = Date.now();
+    clicks.push(now);
+    clicks = clicks.filter(t => now - t < 1500);
+    if (clicks.length >= 5) {
+      showEasterEggAnimal();
+      clicks = [];
+    }
+  });
+}
+
+// Language implied by the browser, ignoring any stored preference.
+function detectBrowserLanguage(availableOptions) {
+  const currentLang = navigator.language || 'en';
+  if (availableOptions.includes(currentLang)) return currentLang;
+  const base = currentLang.split('-')[0];
+  if (availableOptions.includes(base)) return base;
+  return 'en';
+}
+
+// Gives the settings store the save path defaults. Not awaited, since startup
+// must not block on a filesystem probe; on failure the revert stays hidden.
+function resolveDefaultSavePath() {
+  const resolve = (command, name) => {
+    Promise.resolve()
+      .then(() => invoke(command))
+      .then((detected) => {
+        if (typeof detected === 'string' && detected) {
+          setDynamicDefault(name, detected);
+        }
+      })
+      .catch(() => {
+        // No detectable default, so that row keeps no revert button.
+      });
+  };
+
+  resolve('gui_get_default_save_path', 'savePath');
+  resolve('gui_get_default_bedrock_save_path', 'bedrockSavePath');
+  resolve('gui_get_default_luanti_save_path', 'luantiSavePath');
+}
+
 function initSettings() {
   // Settings
   const settingsModal = document.getElementById("settings-modal");
   const slider = document.getElementById("scale-value-slider");
   const sliderValue = document.getElementById("slider-value");
 
-  // Open settings modal
+  // Where focus goes back to once the page closes.
+  let focusBeforeSettings = null;
+
+  // Open the settings page
   function openSettings() {
+    focusBeforeSettings = document.activeElement;
     settingsModal.style.display = "flex";
-    settingsModal.style.justifyContent = "center";
-    settingsModal.style.alignItems = "center";
+    syncSettingsLayout();
+    // Focus moves onto the page, so Tab and the arrow keys act on it rather
+    // than on the map behind it.
+    settingsModal.focus({ preventScroll: true });
+    // The caches grow with every generation, so the number the panel shows
+    // has to be read when the panel opens; measuring it once at startup left
+    // it stale for the whole session.
+    refreshCacheSize();
   }
 
-  // Close settings modal
+  // Close the settings page
   function closeSettings() {
     settingsModal.style.display = "none";
+    // Webview teardown events are not guaranteed, so commit here.
+    flushSettingsStore();
+    cancelSettingsResetConfirm();
+    if (focusBeforeSettings && typeof focusBeforeSettings.focus === "function") {
+      focusBeforeSettings.focus({ preventScroll: true });
+    }
+    focusBeforeSettings = null;
   }
 
-  // Close settings and license modals on escape key
+  // Escape closes the topmost dialog only. License and version info open on
+  // top of the settings page, so closing them returns to it.
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") {
-      if (settingsModal.style.display === "flex") {
-        closeSettings();
-      }
-      
-      const licenseModal = document.getElementById("license-modal");
-      if (licenseModal && licenseModal.style.display === "flex") {
-        closeLicense();
-      }
+    if (event.key !== "Escape") return;
+
+    const licenseModal = document.getElementById("license-modal");
+    const updateModal = document.getElementById("update-modal");
+    const licenseOpen = licenseModal && licenseModal.style.display === "flex";
+    const updateOpen = updateModal && updateModal.style.display === "flex";
+
+    if (licenseOpen) closeLicense();
+    if (updateOpen) closeUpdateModal();
+    if (!licenseOpen && !updateOpen && settingsModal.style.display === "flex") {
+      closeSettings();
     }
   });
 
   window.openSettings = openSettings;
   window.closeSettings = closeSettings;
 
-  // Update slider value display
-  slider.addEventListener("input", () => {
-    sliderValue.textContent = parseFloat(slider.value).toFixed(2);
+  // Mirrors OBJECT_SKIP_SCALE in src/args.rs
+  const OBJECT_SKIP_SCALE = 0.3;
+  const scaleObjectsNote = document.getElementById("scale-objects-note");
+
+  function refreshScaleDisplay() {
+    const value = parseFloat(slider.value);
+    sliderValue.textContent = value.toFixed(2);
+    if (scaleObjectsNote) {
+      scaleObjectsNote.style.display = value < OBJECT_SKIP_SCALE ? "" : "none";
+    }
+  }
+
+  slider.addEventListener("input", refreshScaleDisplay);
+  // Double-click to reset world scale to default (1.00).
+  // Assigning .value fires no event, so dispatch them for the label and store.
+  slider.addEventListener("dblclick", () => {
+    slider.value = 1;
+    slider.dispatchEvent(new Event("input", { bubbles: true }));
+    slider.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  refreshScaleDisplay();
+
+  const heightSlider = document.getElementById("height-multiplier-slider");
+  const heightValue = document.getElementById("height-multiplier-value");
+  const refreshHeightDisplay = () => {
+    heightValue.textContent = parseFloat(heightSlider.value).toFixed(2) + "\u00d7";
+  };
+  heightSlider.addEventListener("input", refreshHeightDisplay);
+  heightSlider.addEventListener("dblclick", () => {
+    heightSlider.value = 1;
+    heightSlider.dispatchEvent(new Event("input", { bubbles: true }));
+    heightSlider.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  refreshHeightDisplay();
+
+  // Game mode segmented control
+  const gamemodeGroup = document.getElementById("gamemode-group");
+  gamemodeGroup.querySelectorAll(".segment").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      gamemodeGroup.querySelectorAll(".segment").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+    });
   });
 
-  // World format toggle (Java/Bedrock)
+  // World type segmented control
+  const worldTypeGroup = document.getElementById("world-type-group");
+  worldTypeGroup.querySelectorAll(".segment").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      worldTypeGroup.querySelectorAll(".segment").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+    });
+  });
+
+  // Signage segmented control
+  const signageGroup = document.getElementById("signage-group");
+  signageGroup.querySelectorAll(".segment").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      signageGroup.querySelectorAll(".segment").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+    });
+  });
+
+  // A reloaded map comes back on Earth; restore whatever was picked.
+  const bodyMapFrame = getMapFrame();
+  if (bodyMapFrame) bodyMapFrame.addEventListener('load', pushBodyToMap);
+
+  // Max tree size segmented control
+  const maxTreeSizeGroup = document.getElementById("max-tree-size-group");
+  maxTreeSizeGroup.querySelectorAll(".segment").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      maxTreeSizeGroup.querySelectorAll(".segment").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+    });
+  });
+
+  // World time slider (clock minutes 00:00-23:50; converted to ticks on submit)
+  const timeSlider = document.getElementById("world-time-slider");
+  const timeValue = document.getElementById("world-time-value");
+  function formatClock(minutes) {
+    if (minutes >= 1440) return "24:00";
+    const h = String(Math.floor(minutes / 60)).padStart(2, "0");
+    const m = String(minutes % 60).padStart(2, "0");
+    return `${h}:${m}`;
+  }
+  timeSlider.addEventListener("input", () => {
+    timeValue.textContent = formatClock(parseInt(timeSlider.value, 10));
+  });
+  timeSlider.addEventListener("dblclick", () => {
+    timeSlider.value = 720;
+    timeSlider.dispatchEvent(new Event("input", { bubbles: true }));
+    timeSlider.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+
+  // Rotation angle input
+  const rotationInput = document.getElementById("rotation-angle-input");
+
+  function updateRotation(val) {
+    if (isNaN(val)) val = 0;
+    val = Math.min(Math.max(val, -90), 90);
+    rotationInput.value = val.toFixed(2);
+    // The bbox handlers set this from code, which fires no input event.
+    refreshSettingsState();
+    // Tell the map iframe to update the rotation mask overlay
+    const mapFrame = document.querySelector('.map-container');
+    if (mapFrame && mapFrame.contentWindow) {
+      mapFrame.contentWindow.postMessage({
+        type: 'rotatePreview',
+        angle: val
+      }, '*');
+    }
+  }
+  rotationInput.addEventListener("input", () => {
+    updateRotation(parseFloat(rotationInput.value));
+  });
+  rotationInput.addEventListener("change", () => {
+    updateRotation(parseFloat(rotationInput.value));
+  });
+  window.updateRotation = updateRotation;
+
+  // World format toggle (Java/Bedrock/Luanti)
   initWorldFormatToggle();
+
+  // Custom world name editor (Java only), gated by its Settings toggle
+  initCustomWorldNameToggle();
+
+  // One World: a persistent world every area extends (Java only)
+  initOneWorld();
 
   // Save path setting
   initSavePathSetting();
@@ -312,29 +1331,22 @@ function initSettings() {
   // Language selector
   const languageSelect = document.getElementById("language-select");
   const availableOptions = Array.from(languageSelect.options).map(opt => opt.value);
-  
+
+  // The default here is the browser language, not an HTML attribute.
+  setDynamicDefault('language', detectBrowserLanguage(availableOptions));
+
   // Check for saved language preference first
   const savedLanguage = localStorage.getItem('arnis-language');
-  let languageToSet = 'en'; // Default to English
-  
+  let languageToSet;
+
   if (savedLanguage && availableOptions.includes(savedLanguage)) {
     // Use saved language if it exists and is available
     languageToSet = savedLanguage;
   } else {
     // Otherwise use browser language
-    const currentLang = navigator.language;
-    
-    // Try to match the exact language code first
-    if (availableOptions.includes(currentLang)) {
-      languageToSet = currentLang;
-    }
-    // Try to match just the base language code
-    else if (availableOptions.includes(currentLang.split('-')[0])) {
-      languageToSet = currentLang.split('-')[0];
-    }
-    // languageToSet remains 'en' as default
+    languageToSet = detectBrowserLanguage(availableOptions);
   }
-  
+
   languageSelect.value = languageToSet;
 
   // Handle language change
@@ -348,13 +1360,8 @@ function initSettings() {
     const localization = await fetchLanguage(selectedLanguage);
     await applyLocalization(localization);
 
-    // Restore correct #selected-world text after localization overwrites it
+    // Restore correct format toggle state after localization
     updateFormatToggleUI(selectedWorldFormat);
-    // If a world was already created, show its name
-    if (worldPath) {
-      const lastSegment = worldPath.split(/[\\/]/).pop();
-      document.getElementById('selected-world').textContent = lastSegment;
-    }
   });
 
   // Tile theme selector
@@ -370,9 +1377,10 @@ function initSettings() {
 
     // Store the selected theme in localStorage for persistence
     localStorage.setItem('selectedTileTheme', selectedTheme);
+    refreshCustomSourceRow();
 
     // Send message to map iframe to change tile theme
-    const mapIframe = document.querySelector('iframe[src="maps.html"]');
+    const mapIframe = getMapFrame();
     if (mapIframe && mapIframe.contentWindow) {
       mapIframe.contentWindow.postMessage({
         type: 'changeTileTheme',
@@ -380,6 +1388,93 @@ function initSettings() {
       }, '*');
     }
   });
+
+  // Custom map source, the field behind the Custom theme. It exists because a
+  // network that blocks every built-in provider turns the fallback chain into a
+  // slower route to the same blank map (see issues #1222, #1298, #1299).
+  const customTileInput = document.getElementById("custom-tile-url");
+  customTileInput.value = getCustomTileUrl();
+
+  // Mapillary token. Kept in localStorage like the save paths so it survives a
+  // restart; it is a per-user API credential, so it is never written to a log
+  // or sent anywhere except the backend that fetches with it.
+  const mapillaryTokenInput = document.getElementById("mapillary-token");
+  mapillaryTokenInput.value = getMapillaryToken();
+  mapillaryTokenInput.addEventListener("change", () => {
+    const raw = mapillaryTokenInput.value.trim();
+    if (raw) {
+      localStorage.setItem('mapillaryToken', raw);
+    } else {
+      localStorage.removeItem('mapillaryToken');
+    }
+    refreshFacadeRows();
+  });
+
+  // The source control, and the detail beside it. Each keeps its own key so
+  // the rest of main.js can read it without the store, and is registered in
+  // settings-store.js as well so the panel's Revert and Reset reach it.
+  const segmented = (id, storageKey, dataAttr, after) => {
+    const group = document.getElementById(id);
+    if (!group) return;
+    group.querySelectorAll(".segment").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        // A disabled segment is still clicked by settings-store.js when it
+        // restores or reverts, and refusing that would lose a choice made on
+        // Java the moment the format changed.
+        localStorage.setItem(storageKey, btn.dataset[dataAttr]);
+        group.querySelectorAll(".segment").forEach((b) => {
+          b.classList.toggle("active", b === btn);
+        });
+        if (after) after();
+      });
+    });
+  };
+  segmented("facade-source-group", "facadeSource", "facadeSource", refreshFacadeRows);
+  segmented("facade-detail-group", "facadeDetail", "facadeDetail", null);
+  refreshFacadeRows();
+
+  // An older build kept a facade export folder here. The field is gone, the
+  // preview reads the cache and generation fetches into it, so the leftover
+  // key means nothing and is dropped rather than left to look meaningful.
+  localStorage.removeItem('facadeDir');
+
+  const facadeModeGroup = document.getElementById("facade-mode-group");
+  facadeModeGroup.querySelectorAll(".segment").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      localStorage.setItem('facadeMode', btn.dataset.facadeMode);
+      refreshFacadeRows();
+    });
+  });
+  refreshFacadeRows();
+
+  function applyCustomTileUrl() {
+    const raw = customTileInput.value.trim();
+
+    // An empty field is the normal way to go back to the themes. A non-empty
+    // one that is not a usable template is left in the box so the user can see
+    // and correct it, but is not handed to the map.
+    if (raw && !isValidTileTemplate(raw)) {
+      window.arnisLog('warn', 'Ignoring custom map source: expected an http(s) URL containing {z}, {x} and {y}.');
+      localStorage.removeItem('customTileUrl');
+    } else if (raw) {
+      localStorage.setItem('customTileUrl', raw);
+    } else {
+      localStorage.removeItem('customTileUrl');
+    }
+
+    const mapIframe = getMapFrame();
+    if (mapIframe && mapIframe.contentWindow) {
+      mapIframe.contentWindow.postMessage({
+        type: 'setCustomTileUrl',
+        url: getCustomTileUrl()
+      }, '*');
+    }
+  }
+
+  // On change, not on input: a half-typed URL is not a source, and remounting
+  // the basemap per keystroke would hammer whatever host they are aiming at.
+  customTileInput.addEventListener("change", applyCustomTileUrl);
+  refreshCustomSourceRow();
 
   // Telemetry consent toggle
   const telemetryToggle = document.getElementById("telemetry-toggle");
@@ -393,108 +1488,320 @@ function initSettings() {
   telemetryToggle.addEventListener("change", () => {
     const isEnabled = telemetryToggle.checked;
     localStorage.setItem(telemetryKey, isEnabled ? 'true' : 'false');
+    syncTelemetryConsent();
   });
 
 
   /// License and Credits
-  function openLicense() {
+  async function openLicense() {
     const licenseModal = document.getElementById("license-modal");
     const licenseContent = document.getElementById("license-content");
 
-    // Render the license text as HTML
     licenseContent.innerHTML = licenseText;
+    licenseContent.scrollTop = 0;
+    showModal(licenseModal);
 
-    // Show the modal
-    licenseModal.style.display = "flex";
-    licenseModal.style.justifyContent = "center";
-    licenseModal.style.alignItems = "center";
+    // The credits only known at runtime go into their own spot in the
+    // "Models, Textures and Fonts" list. Held by reference, so a slow answer
+    // from an earlier opening lands in that opening's detached copy rather
+    // than doubling up in this one.
+    const runtime = licenseContent.querySelector("#license-runtime-credits") || licenseContent;
+    const credit = (title, body) =>
+      `<div class="credit"><h4>${title}</h4>${body}</div>`;
+
+    runtime.insertAdjacentHTML("beforeend", credit(
+      "3D Model Repository (3DMR)",
+      `<p>Landmark models from <a href="https://3dmr.eu" target="_blank" rel="noopener noreferrer">3dmr.eu</a> are fetched on demand and voxelized. Individual models retain the license declared by their uploader; specific per-model attribution is printed to the generation log. See the <a href="https://3dmr.eu" target="_blank" rel="noopener noreferrer">3DMR website</a> for any model used.</p>`
+    ));
+
+    // The premade facade set. All CC0, so attribution is a courtesy rather than
+    // a condition, but the sources are named because someone should be able to
+    // find them and because it says plainly that the pixels are free to ship.
+    runtime.insertAdjacentHTML("beforeend", credit(
+      "Preset Building Facade Textures",
+      `<p>The photographs hung on buildings by the Preset Facades setting, all released under ` +
+      `<a href="https://creativecommons.org/publicdomain/zero/1.0/" target="_blank" rel="noopener noreferrer">CC0</a>:</p>` +
+      `<ul>` +
+      `<li>Urban building, apartment and shop front photographs by <b>Scouser</b>, from ` +
+      `<a href="https://opengameart.org/content/free-urban-textures-buildings-apartments-shop-fronts" target="_blank" rel="noopener noreferrer">OpenGameArt</a></li>` +
+      `<li>Tiling facade materials from <b>TextureCan</b>: ` +
+      `<a href="https://www.texturecan.com/details/315/" target="_blank" rel="noopener noreferrer">315</a>, ` +
+      `<a href="https://www.texturecan.com/details/316/" target="_blank" rel="noopener noreferrer">316</a>, ` +
+      `<a href="https://www.texturecan.com/details/357/" target="_blank" rel="noopener noreferrer">357</a>, ` +
+      `<a href="https://www.texturecan.com/details/360/" target="_blank" rel="noopener noreferrer">360</a>, ` +
+      `<a href="https://www.texturecan.com/details/563/" target="_blank" rel="noopener noreferrer">563</a></li>` +
+      `</ul>`
+    ));
+
+    const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+    const link = (url, text) =>
+      `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(text)}</a>`;
+
+    // Mapillary imagery is CC BY-SA, and the licence is on the pixels: a world
+    // built from street photographs has to name the photographers. The source
+    // is named whether or not a run has used it yet, so the credit can be
+    // found before the first generation; the per-image list underneath, one
+    // line per photograph in the shape Mapillary's own guidance asks for,
+    // fills in after one.
+    let shots = [];
+    try {
+      const used = await invoke("gui_get_mapillary_attributions");
+      if (Array.isArray(used)) shots = used;
+    } catch (e) {
+      console.warn("Failed to load Mapillary attributions:", e);
+    }
+    let mapillaryList;
+    if (shots.length > 0) {
+      // A record that carries the image id but not the uploader name has no
+      // profile to link to, so the name is shown as plain text instead.
+      const lines = shots.map((s) => {
+        const by = s.profile_url ? link(s.profile_url, s.username) : esc(s.username);
+        return `<li>${link(s.image_url, s.title)} by ${by}, licensed under CC-BY-SA</li>`;
+      }).join("");
+      const unnamed = shots.filter((s) => !s.profile_url).length;
+      const note = unnamed > 0
+        ? ` ${unnamed} of these name only the photograph: their records carry the image id but not the uploader name. Each link opens the image, which names its uploader.`
+        : "";
+      mapillaryList =
+        `<p>Photographs used by the last generation:${note}</p>` +
+        `<ul>${lines}</ul>`;
+    } else {
+      mapillaryList =
+        `<p>The photographs a generation used are listed here once it has run.</p>`;
+    }
+    runtime.insertAdjacentHTML("beforeend", credit(
+      "Building Facades (Mapillary)",
+      `<p>The Mapillary facade source measures wall textures and colours from street-level photographs on ` +
+      `${link("https://www.mapillary.com", "Mapillary")}, licensed ` +
+      `${link("https://creativecommons.org/licenses/by-sa/4.0/", "CC BY-SA 4.0")}. ` +
+      `Share-alike applies to anything you publish that carries them.</p>` +
+      mapillaryList
+    ));
+
+    try {
+      const rows = await invoke("gui_get_3d_model_attributions");
+      if (Array.isArray(rows) && rows.length > 0) {
+        const items = rows.map(r => {
+          const lic = r.license_url
+            ? `<a href="${esc(r.license_url)}" target="_blank" rel="noopener noreferrer">${esc(r.license)}</a>`
+            : esc(r.license);
+          return `<li><b>${esc(r.label)}</b> — ${esc(r.artist)}, ${lic} (<a href="${esc(r.source_url)}" target="_blank" rel="noopener noreferrer">source</a>)</li>`;
+        }).join("");
+        runtime.insertAdjacentHTML("beforeend", credit(
+          "Bundled 3D Models (Wikimedia Commons via Wikidata P4896)",
+          `<p>Permissive-licensed models used to render famous landmarks. Voxelized and rescaled by Arnis.</p>` +
+          `<ul>${items}</ul>`
+        ));
+      }
+    } catch (e) {
+      console.warn("Failed to load 3D model attributions:", e);
+    }
   }
 
   function closeLicense() {
     const licenseModal = document.getElementById("license-modal");
-    licenseModal.style.display = "none";
+    hideModal(licenseModal);
   }
 
   window.openLicense = openLicense;
   window.closeLicense = closeLicense;
 }
 
-// World format selection (Java/Bedrock)
+// World format selection (Java/Bedrock/Luanti)
 let selectedWorldFormat = 'java'; // Default to Java
 
+const VALID_FORMATS = ['java', 'bedrock', 'luanti'];
+
+// Voxy renders distant terrain from the per-voxel light stored in its LOD
+// cache, so pre-generating one without baked lighting would give a black
+// horizon. Keep the two toggles consistent in the UI rather than quietly
+// overriding the user's choice at generation time.
+function initVoxyLightingCoupling() {
+  const voxy = document.getElementById('voxy-lod-toggle');
+  const bake = document.getElementById('bake-lighting-toggle');
+  if (!voxy || !bake) return;
+
+  // Dispatch so the settings store persists the knock-on change too.
+  const set = (el, value) => {
+    if (el.checked === value) return;
+    el.checked = value;
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+
+  voxy.addEventListener('change', () => {
+    if (voxy.checked) set(bake, true);
+  });
+  bake.addEventListener('change', () => {
+    if (!bake.checked) set(voxy, false);
+  });
+}
+
+// Caves are carved into the filled ground, so turning them on turns Fill Ground
+// on, and turning Fill Ground off takes the caves with it.
+function initCavesFillCoupling() {
+  const caves = document.getElementById('caves-toggle');
+  const fill = document.getElementById('fillground-toggle');
+  if (!caves || !fill) return;
+
+  // Dispatch so the settings store persists the knock-on change too.
+  const set = (el, value) => {
+    if (el.checked === value) return;
+    el.checked = value;
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  };
+
+  caves.addEventListener('change', () => {
+    if (caves.checked) set(fill, true);
+  });
+  fill.addEventListener('change', () => {
+    if (!fill.checked) set(caves, false);
+  });
+}
+
 function initWorldFormatToggle() {
-  // Load saved format preference
+  initLuantiExperimentalToggle();
+
   const savedFormat = localStorage.getItem('arnis-world-format');
-  if (savedFormat && (savedFormat === 'java' || savedFormat === 'bedrock')) {
+  if (savedFormat && VALID_FORMATS.includes(savedFormat)) {
     selectedWorldFormat = savedFormat;
   }
-  
-  // Apply the saved selection to UI
+  if (selectedWorldFormat === 'luanti' && !isLuantiEnabled()) {
+    selectedWorldFormat = 'java';
+  }
+
   updateFormatToggleUI(selectedWorldFormat);
 }
 
-window.toggleJpExtensions = function() {
-  var content = document.getElementById("jp-extensions-content");
-  var arrow = document.getElementById("jp-extensions-arrow");
-  if (content.style.display === "none") {
-    content.style.display = "block";
-    arrow.classList.add("open");
-  } else {
-    content.style.display = "none";
-    arrow.classList.remove("open");
-  }
-};
+function isLuantiEnabled() {
+  return localStorage.getItem('arnis-luanti-enabled') === 'true';
+}
+
+function initLuantiExperimentalToggle() {
+  const toggle = document.getElementById('enable-luanti-toggle');
+  const luantiBtn = document.getElementById('format-luanti');
+  const bedrockBtn = document.getElementById('format-bedrock');
+  if (!toggle || !luantiBtn) return;
+
+  const luantiPathRow = document.getElementById('luanti-save-path-row');
+
+  const applyRightmost = (enabled) => {
+    luantiBtn.style.display = enabled ? '' : 'none';
+    luantiBtn.classList.toggle('format-toggle-btn--rightmost', enabled);
+    if (bedrockBtn) {
+      bedrockBtn.classList.toggle('format-toggle-btn--rightmost', !enabled);
+    }
+    // A save path for a format nobody can pick is only noise.
+    if (luantiPathRow) luantiPathRow.style.display = enabled ? '' : 'none';
+  };
+
+  const enabled = isLuantiEnabled();
+  toggle.checked = enabled;
+  applyRightmost(enabled);
+
+  toggle.addEventListener('change', () => {
+    const on = toggle.checked;
+    localStorage.setItem('arnis-luanti-enabled', on ? 'true' : 'false');
+    applyRightmost(on);
+    if (!on && selectedWorldFormat === 'luanti') {
+      setWorldFormat('java');
+    }
+  });
+}
 
 function setWorldFormat(format) {
-  if (format !== 'java' && format !== 'bedrock') return;
-  
+  if (!VALID_FORMATS.includes(format)) return;
+  if (format === 'luanti' && (!isLuantiEnabled() || isOneWorldToggleOn())) return;
+
   selectedWorldFormat = format;
   localStorage.setItem('arnis-world-format', format);
   updateFormatToggleUI(format);
 }
 
+function getEffectiveWorldFormat() {
+  if (selectedWorldFormat === 'luanti') {
+    return 'luanti_mineclonia';
+  }
+  return selectedWorldFormat;
+}
+
+// The extended dimension is declared by the Java datapack and the Bedrock
+// behavior pack; Luanti ships neither, and off Earth the relief already fits
+// vanilla height, so the backend forces the flag off there.
+function heightLimitAvailable(format) {
+  return selectedCelestialBody === 'earth' && format !== 'luanti';
+}
+
+function refreshHeightLimitRow(format) {
+  const toggle = document.getElementById('disable-height-limit-toggle');
+  if (!toggle) return;
+
+  const available = heightLimitAvailable(format || selectedWorldFormat);
+  toggle.disabled = !available;
+
+  const row = toggle.closest('.settings-row');
+  if (row) {
+    // Cleared, not set to 1: an inline value would beat the class rule.
+    row.style.opacity = '';
+    row.classList.toggle('settings-row-unavailable', !available);
+  }
+}
+
+// Bedrock and Luanti keep their own flat generators, so the choice only means
+// something for Java. Greyed rather than hidden, like the other format gates.
+function refreshWorldTypeRow(format) {
+  const group = document.getElementById('world-type-group');
+  if (!group) return;
+  const java = (format || selectedWorldFormat) === 'java';
+  group.classList.toggle('segmented-disabled', !java);
+  const row = group.closest('.settings-row');
+  if (row) row.classList.toggle('settings-row-unavailable', !java);
+}
+
 function updateFormatToggleUI(format) {
   const javaBtn = document.getElementById('format-java');
   const bedrockBtn = document.getElementById('format-bedrock');
-  const chooseWorldBtn = document.getElementById('choose-world-btn');
-  const selectedWorldText = document.getElementById('selected-world');
-  
+  const luantiBtn = document.getElementById('format-luanti');
+
+  refreshHeightLimitRow(format);
+  refreshWorldTypeRow(format);
+
+  javaBtn.classList.remove('format-active');
+  bedrockBtn.classList.remove('format-active');
+  if (luantiBtn) luantiBtn.classList.remove('format-active');
+
   if (format === 'java') {
     javaBtn.classList.add('format-active');
-    bedrockBtn.classList.remove('format-active');
-    // Enable Create World button for Java
-    if (chooseWorldBtn) {
-      chooseWorldBtn.disabled = false;
-      chooseWorldBtn.style.opacity = '1';
-      chooseWorldBtn.style.cursor = 'pointer';
-    }
-    // Show appropriate text based on whether a world was already created
-    if (selectedWorldText && !worldPath) {
-      const noWorldText = window.localization?.no_world_selected || 'No world created';
-      selectedWorldText.textContent = noWorldText;
-      selectedWorldText.style.color = '#fecc44';
-    }
-  } else {
-    javaBtn.classList.remove('format-active');
+  } else if (format === 'bedrock') {
     bedrockBtn.classList.add('format-active');
-    // Disable Create World button for Bedrock
-    if (chooseWorldBtn) {
-      chooseWorldBtn.disabled = true;
-      chooseWorldBtn.style.opacity = '0.5';
-      chooseWorldBtn.style.cursor = 'not-allowed';
-    }
-    // Clear world selection and show Bedrock info message
+    // Clear world path for bedrock (auto-generated)
     worldPath = "";
-    if (selectedWorldText) {
-      const bedrockText = window.localization?.bedrock_auto_generated || 'Bedrock world is auto-generated';
-      selectedWorldText.textContent = bedrockText;
-      selectedWorldText.style.color = '#fecc44';
-    }
+  } else if (format === 'luanti') {
+    if (luantiBtn) luantiBtn.classList.add('format-active');
+    worldPath = "";
   }
+  // The label names the last Java world only while that is still the target.
+  if (!worldPath) worldLabelName = "";
+
+  // The facade panels are Java entities, so the mode control changes with the
+  // format. Called from here so a format picked before the settings modal is
+  // ever opened still leaves it consistent.
+  refreshFacadeRows();
+  // Custom names are Java-only; hide/show the pencil and re-derive the
+  // label preview whenever the active format changes.
+  refreshWorldNameEditUI();
+  // One World is Java-only too: its status and pins follow the format.
+  refreshOneWorldState();
 }
 
 // Expose to window for onclick handlers
 window.setWorldFormat = setWorldFormat;
+
+// The backend only reports crashes and errors while it holds a consent of true,
+// so push the stored answer to it at startup and on every change.
+function syncTelemetryConsent() {
+  const consent = localStorage.getItem('telemetry-consent') === 'true';
+  Promise.resolve(invoke('gui_set_telemetry_consent', { consent })).catch(() => {});
+}
 
 // Telemetry consent (first run only)
 function initTelemetryConsent() {
@@ -506,30 +1813,34 @@ function initTelemetryConsent() {
 
   if (existing === null) {
     // First run: ask for consent
-    modal.style.display = 'flex';
-    modal.style.justifyContent = 'center';
-    modal.style.alignItems = 'center';
+    showModal(modal);
   }
+  syncTelemetryConsent();
 
   // Expose handlers
   window.acceptTelemetry = () => {
     localStorage.setItem(key, 'true');
-    modal.style.display = 'none';
+    hideModal(modal);
+    syncTelemetryConsent();
     // Update settings toggle to reflect the consent
     const telemetryToggle = document.getElementById('telemetry-toggle');
     if (telemetryToggle) {
       telemetryToggle.checked = true;
     }
+    // Set from code, so no change event fired.
+    refreshSettingsState();
   };
 
   window.rejectTelemetry = () => {
     localStorage.setItem(key, 'false');
-    modal.style.display = 'none';
+    hideModal(modal);
+    syncTelemetryConsent();
     // Update settings toggle to reflect the consent
     const telemetryToggle = document.getElementById('telemetry-toggle');
     if (telemetryToggle) {
       telemetryToggle.checked = false;
     }
+    refreshSettingsState();
   };
 
   // Utility for other scripts to read consent
@@ -539,80 +1850,481 @@ function initTelemetryConsent() {
   };
 }
 
-/// Save path management
+// Wires the "Clear Tile Cache" button in the Application settings panel
+// to the Rust-side `gui_clear_tile_caches` command. User feedback is a
+// brief background flash (green on success, red on partial failure) —
+// keeps the row visually consistent with the other checkbox/slider
+// rows, no extra status label. The button stays disabled while the
+// call is in flight so repeated clicks can't fire multiple concurrent
+// wipes (Rust is idempotent, but the UI would look confused).
+// How much disk the caches hold, shown next to the Clear button so the user
+// can see whether clearing is worth doing. Asked for when the settings panel
+// opens and again after anything that changes the caches, never at startup and
+// never on a timer: the answer is a walk of every cached file, which is tenths
+// of a second once a facade run has filled the tile cache.
+async function refreshCacheSize() {
+  const label = document.getElementById('cache-size');
+  if (!label) {
+    return;
+  }
+  try {
+    label.textContent = await invoke('gui_get_cache_size');
+  } catch (error) {
+    console.warn('Cache size unavailable:', error);
+    label.textContent = '';
+  }
+}
+window.refreshCacheSize = refreshCacheSize;
+
+function initClearCacheButton() {
+  const button = document.getElementById('clear-cache-button');
+  if (!button) {
+    return;
+  }
+  // Deliberately not asking for the size here. This runs on DOMContentLoaded,
+  // where the number cannot be seen by anyone: the label lives inside the
+  // settings panel, and `openSettings` asks for it there. Reading it at startup
+  // only bought a value that was stale by the time the panel opened, and paid
+  // for it with a walk of every cached file while the window was going up.
+
+  // How long the success/error flash stays applied before reverting to
+  // the default outline. Long enough to register as confirmation, short
+  // enough that a user can click again quickly if they want.
+  const FLASH_MS = 1500;
+  let flashTimer = null;
+
+  const flash = (cls) => {
+    button.classList.remove('is-success', 'is-error');
+    button.classList.add(cls);
+    if (flashTimer) {
+      clearTimeout(flashTimer);
+    }
+    flashTimer = setTimeout(() => {
+      button.classList.remove('is-success', 'is-error');
+      flashTimer = null;
+    }, FLASH_MS);
+  };
+
+  button.addEventListener('click', async () => {
+    if (button.disabled) {
+      return;
+    }
+    button.disabled = true;
+    // Pre-emptively drop any lingering flash class from a previous run
+    // so "clearing…" state isn't tinted green/red left over from before.
+    button.classList.remove('is-success', 'is-error');
+    try {
+      await invoke('gui_clear_tile_caches');
+      flash('is-success');
+      refreshCacheSize();
+    } catch (error) {
+      // The Rust side returns Err(String) for partial failures (files
+      // still locked). The user sees the red flash; the full text goes
+      // to the browser console for debugging, not the UI.
+      console.warn('Clear tile cache failed:', error);
+      flash('is-error');
+    } finally {
+      button.disabled = false;
+    }
+  });
+}
+
+/* Precompute: fills the Mapillary facade cache for the selected area, so the
+   generation that follows does no image work and the 3D preview can show the
+   walls. The backend refuses a second precompute and one started beside a
+   generation; the button state here is that same rule said early, so pressing
+   it is never the way to find out it cannot run. */
+
+let precomputeRunning = false;
+let precomputeStartedAt = 0;
+let precomputeTicker = null;
+// The pipeline reports its stages on the shared progress channel. Nothing else
+// is emitting while a precompute holds the process, so those lines are mirrored
+// into the settings row instead of being left in a status bar the user is not
+// looking at, under a progress bar that is not moving.
+let precomputeStage = "";
+
+// What the pipeline prefixes its stage lines with. Kept short because the same
+// lines go to the progress bar's status line, which is one line of a 320px
+// panel.
+const FACADE_STAGE_PREFIX = "Facades:";
+
+function setPrecomputeStatus(text, kind, detail) {
+  const el = document.getElementById('facade-precompute-status');
+  if (!el) return;
+  el.textContent = text || "";
+  el.style.display = text ? "" : "none";
+  el.classList.toggle('is-success', kind === 'success');
+  el.classList.toggle('is-error', kind === 'error');
+  if (detail) {
+    el.title = detail;
+  } else {
+    el.removeAttribute('title');
+  }
+}
+
+// Why the button cannot be pressed, or "" when it can. The wording is what the
+// button's tooltip says, so a disabled button always explains itself.
+function precomputeBlockedReason() {
+  if (selectedCelestialBody !== 'earth') {
+    return "Facades are Earth only. Switch the world back in the map toolbar.";
+  }
+  // The source control decides this, and it is the reason the row above greys
+  // the button out; without it here the next refresh switches it back on.
+  if (getEffectiveFacadeSource() !== 'mapillary') {
+    return "Set Facade Source to Mapillary first.";
+  }
+  if (!getMapillaryToken()) return "Add a Mapillary token above first.";
+  if (!selectedBBox || selectedBBox === "0.000000 0.000000 0.000000 0.000000") {
+    return "Select an area on the map first.";
+  }
+  if (!generationButtonEnabled) return "A generation is running.";
+  return "";
+}
+
+function refreshPrecomputeButton() {
+  const button = document.getElementById('precompute-facades-button');
+  if (!button) return;
+
+  if (precomputeRunning) {
+    // Never disabled while running: this is the only way to stop it.
+    button.disabled = false;
+    button.textContent = "Cancel";
+    button.title = "Stops at the end of the stage it is in. Walls already built stay cached.";
+    return;
+  }
+
+  const localized = window.localization || {};
+  button.textContent = localized['facade_precompute_button'] || "Precompute";
+  const blocked = precomputeBlockedReason();
+  button.disabled = !!blocked;
+  button.title = blocked;
+}
+
+// mm:ss since the run started, for a job whose stages are minutes long.
+function precomputeElapsed() {
+  const seconds = Math.max(0, Math.round((Date.now() - precomputeStartedAt) / 1000));
+  return Math.floor(seconds / 60) + ":" + String(seconds % 60).padStart(2, '0');
+}
+
+function showPrecomputeProgress() {
+  if (!precomputeRunning) return;
+  setPrecomputeStatus((precomputeStage || "Working...") + " (" + precomputeElapsed() + ")");
+}
+
+// Called by the progress listener for every line the facade pipeline emits, so
+// the row says which stage is running rather than only that something is.
+function notePrecomputeStage(message) {
+  if (!precomputeRunning || !message.startsWith(FACADE_STAGE_PREFIX)) return;
+  precomputeStage = message.slice(FACADE_STAGE_PREFIX.length).trim();
+  showPrecomputeProgress();
+}
+
+function initPrecomputeFacadesButton() {
+  const button = document.getElementById('precompute-facades-button');
+  if (!button) return;
+  refreshPrecomputeButton();
+
+  button.addEventListener('click', async () => {
+    if (precomputeRunning) {
+      // The pipeline checks between stages, so this is a request, not a stop.
+      precomputeStage = "Cancelling after this stage";
+      showPrecomputeProgress();
+      try {
+        await invoke('gui_cancel_precompute');
+      } catch (error) {
+        console.warn('Cancel precompute failed:', error);
+      }
+      return;
+    }
+
+    const blocked = precomputeBlockedReason();
+    if (blocked) {
+      setPrecomputeStatus(blocked, 'error');
+      return;
+    }
+
+    precomputeRunning = true;
+    precomputeStartedAt = Date.now();
+    precomputeStage = "Starting";
+    refreshPrecomputeButton();
+    showPrecomputeProgress();
+    // One second, so a run that spends twenty minutes in one stage still shows
+    // something moving and cannot be mistaken for a hang.
+    precomputeTicker = setInterval(showPrecomputeProgress, 1000);
+
+    try {
+      const outcome = await invoke('gui_precompute_facades', {
+        bboxText: selectedBBox,
+        mapillaryToken: getMapillaryToken(),
+      });
+      // Green only when there are facades here now. A cancelled run and an
+      // area with nothing to find both come back plain: neither is a failure
+      // and neither left a wall behind.
+      setPrecomputeStatus(outcome.summary, outcome.built ? 'success' : '', outcome.detail);
+      if (outcome.built) window.arnisPreview3D?.refreshFacades();
+      refreshCacheSize();
+    } catch (error) {
+      // Every refusal from the backend is a sentence meant to be read. The
+      // longer ones are written as that sentence, a blank line, and the reason
+      // behind it: the row holds one line, so the reason becomes its tooltip.
+      const text = String(error);
+      const split = text.indexOf("\n\n");
+      const head = split < 0 ? text : text.slice(0, split).trim();
+      const rest = split < 0 ? "" : text.slice(split + 2).trim();
+      setPrecomputeStatus(head, 'error', rest || undefined);
+      refreshCacheSize();
+    } finally {
+      clearInterval(precomputeTicker);
+      precomputeTicker = null;
+      precomputeRunning = false;
+      refreshPrecomputeButton();
+    }
+  });
+}
+
+// Single shared tooltip element appended to <body>, so it escapes the
+// `.settings-scrollable` container's `overflow: hidden` clip and can
+// extend past the top / sides of the panel. Previously the tooltip
+// lived as a `::after` pseudo-element on each `.tooltip-icon`, which
+// meant long text or icons near an edge got cut off by the scroll
+// container. This global element is positioned via
+// `getBoundingClientRect` on hover and auto-flips above ↔ below when
+// close to the viewport edge.
+function initTooltips() {
+  const tooltip = document.createElement('div');
+  tooltip.className = 'global-tooltip';
+  tooltip.setAttribute('role', 'tooltip');
+  tooltip.setAttribute('aria-hidden', 'true');
+  const arrow = document.createElement('div');
+  arrow.className = 'global-tooltip-arrow';
+  tooltip.appendChild(arrow);
+  const body = document.createElement('div');
+  body.className = 'global-tooltip-body';
+  tooltip.appendChild(body);
+  document.body.appendChild(tooltip);
+
+  const VIEWPORT_MARGIN = 8; // px gap between tooltip and viewport edge
+  const ICON_GAP = 8; // px gap between tooltip and icon
+
+  let currentIcon = null;
+
+  const position = () => {
+    if (!currentIcon) return;
+    const iconRect = currentIcon.getBoundingClientRect();
+    // Measure after text is set; reset to allow natural width.
+    const ttRect = tooltip.getBoundingClientRect();
+
+    // Default: centered above the icon. Flip below when there isn't
+    // enough room above (e.g. icon near the top of the settings panel,
+    // which is the "cut off at the top" case the user reported).
+    const spaceAbove = iconRect.top;
+    const flipBelow = spaceAbove < ttRect.height + ICON_GAP + VIEWPORT_MARGIN;
+    const top = flipBelow
+      ? iconRect.bottom + ICON_GAP
+      : iconRect.top - ttRect.height - ICON_GAP;
+
+    // Horizontal: center on the icon, then clamp into the viewport so
+    // tooltips near the right edge don't overflow into hidden space.
+    const desiredLeft = iconRect.left + iconRect.width / 2 - ttRect.width / 2;
+    const maxLeft = window.innerWidth - ttRect.width - VIEWPORT_MARGIN;
+    const left = Math.max(VIEWPORT_MARGIN, Math.min(desiredLeft, maxLeft));
+
+    tooltip.style.top = top + 'px';
+    tooltip.style.left = left + 'px';
+
+    // Point the arrow back at the icon's center, regardless of the
+    // horizontal clamp above, and flip it to the opposite edge when the
+    // tooltip opens below the icon.
+    const iconCenter = iconRect.left + iconRect.width / 2;
+    const arrowLeft = Math.max(8, Math.min(ttRect.width - 8, iconCenter - left));
+    arrow.style.left = arrowLeft + 'px';
+    tooltip.classList.toggle('flipped', flipBelow);
+  };
+
+  const show = (icon) => {
+    const text = icon.getAttribute('data-tooltip');
+    if (!text) return;
+    currentIcon = icon;
+    body.textContent = text;
+    // Position BEFORE making visible. The tooltip stays `visibility:
+    // hidden` (layout-active, paint-inactive) so `getBoundingClientRect`
+    // returns the real dimensions, but the user never sees a 0,0 flash
+    // between insertion and the first position-frame.
+    position();
+    tooltip.classList.add('is-visible');
+    tooltip.setAttribute('aria-hidden', 'false');
+  };
+
+  const hide = () => {
+    currentIcon = null;
+    tooltip.classList.remove('is-visible', 'flipped');
+    tooltip.setAttribute('aria-hidden', 'true');
+  };
+
+  const bind = (icon) => {
+    // Make `<span class="tooltip-icon">` focusable via Tab so keyboard
+    // users can reveal the tooltip. Spans are not focusable by default,
+    // so the focus/blur listeners below are dead without this. Done in
+    // JS rather than HTML so every icon picks it up automatically and
+    // we don't have to keep the 14 call sites in sync. `role="button"`
+    // is a reasonable hint for screen readers that this thing is
+    // interactive even though it doesn't do anything on click.
+    if (icon.tabIndex < 0) {
+      icon.tabIndex = 0;
+    }
+    if (!icon.hasAttribute('role')) {
+      icon.setAttribute('role', 'button');
+    }
+    if (!icon.hasAttribute('aria-label')) {
+      const text = icon.getAttribute('data-tooltip');
+      if (text) {
+        icon.setAttribute('aria-label', text);
+      }
+    }
+    icon.addEventListener('mouseenter', () => show(icon));
+    icon.addEventListener('mouseleave', hide);
+    // The icon sits inside the setting's <label>, whose click would otherwise
+    // flip the switch it belongs to.
+    icon.addEventListener('click', (e) => e.preventDefault());
+    icon.addEventListener('focus', () => show(icon));
+    icon.addEventListener('blur', hide);
+    // Escape closes the tooltip while it's focused.
+    icon.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        hide();
+      }
+    });
+  };
+
+  document.querySelectorAll('.tooltip-icon').forEach(bind);
+
+  // Reposition on viewport resize / scroll (including inside the
+  // settings-scrollable container). Also hide on scroll inside the
+  // settings panel, because the icon may have scrolled off-screen
+  // and a stale tooltip hovering over the wrong row is worse than
+  // hiding eagerly.
+  window.addEventListener('resize', () => {
+    if (currentIcon) position();
+  });
+  const scrollable = document.querySelector('.settings-scrollable');
+  if (scrollable) {
+    scrollable.addEventListener('scroll', hide, { passive: true });
+  }
+}
+
+/// Save path management, one path per world format
 let savePath = "";
+let bedrockSavePath = "";
+let luantiSavePath = "";
+
+const SAVE_PATHS = {
+  java: {
+    storageKey: 'arnis-save-path',
+    defaultCommand: 'gui_get_default_save_path',
+    inputId: 'save-path-input',
+    browseId: 'save-path-browse',
+    get: () => savePath,
+    set: (value) => {
+      const changed = savePath !== value;
+      savePath = value;
+      // The One World lives under the saves path, so a new path is a new world.
+      if (changed && typeof refreshOneWorldState === 'function') refreshOneWorldState();
+    },
+  },
+  bedrock: {
+    storageKey: 'arnis-bedrock-save-path',
+    defaultCommand: 'gui_get_default_bedrock_save_path',
+    inputId: 'bedrock-save-path-input',
+    browseId: 'bedrock-save-path-browse',
+    get: () => bedrockSavePath,
+    set: (value) => { bedrockSavePath = value; },
+  },
+  luanti: {
+    storageKey: 'arnis-luanti-save-path',
+    defaultCommand: 'gui_get_default_luanti_save_path',
+    inputId: 'luanti-save-path-input',
+    browseId: 'luanti-save-path-browse',
+    get: () => luantiSavePath,
+    set: (value) => { luantiSavePath = value; },
+  },
+};
 
 async function initSavePath() {
-  // Check if user has a saved path in localStorage
-  const saved = localStorage.getItem('arnis-save-path');
+  for (const config of Object.values(SAVE_PATHS)) {
+    config.set(await resolveStoredSavePath(config));
+    const input = document.getElementById(config.inputId);
+    if (input) {
+      input.value = config.get();
+    }
+  }
+}
+
+async function resolveStoredSavePath({ storageKey, defaultCommand }) {
+  const saved = localStorage.getItem(storageKey);
   if (saved) {
     // Validate the saved path still exists (handles upgrades / moved directories)
     try {
       const normalized = await invoke('gui_set_save_path', { path: saved });
-      savePath = normalized;
-      localStorage.setItem('arnis-save-path', savePath);
+      localStorage.setItem(storageKey, normalized);
+      return normalized;
     } catch (_) {
-      // Saved path is no longer valid – re-detect
-      console.warn("Stored save path no longer valid, re-detecting...");
-      localStorage.removeItem('arnis-save-path');
-      try {
-        savePath = await invoke('gui_get_default_save_path');
-        localStorage.setItem('arnis-save-path', savePath);
-      } catch (error) {
-        console.error("Failed to detect save path:", error);
-      }
-    }
-  } else {
-    // Auto-detect on first run
-    try {
-      savePath = await invoke('gui_get_default_save_path');
-      localStorage.setItem('arnis-save-path', savePath);
-    } catch (error) {
-      console.error("Failed to detect save path:", error);
+      console.warn(`Stored path ${storageKey} no longer valid, re-detecting...`);
+      localStorage.removeItem(storageKey);
     }
   }
 
-  // Populate the save path input in settings
-  const savePathInput = document.getElementById('save-path-input');
-  if (savePathInput) {
-    savePathInput.value = savePath;
+  try {
+    const detected = await invoke(defaultCommand);
+    localStorage.setItem(storageKey, detected);
+    return detected;
+  } catch (error) {
+    console.error(`Failed to detect path for ${storageKey}:`, error);
+    return "";
   }
 }
 
 function initSavePathSetting() {
-  const savePathInput = document.getElementById('save-path-input');
-  if (!savePathInput) return;
+  for (const config of Object.values(SAVE_PATHS)) {
+    initSavePathRow(config);
+  }
+}
 
-  savePathInput.value = savePath;
+function initSavePathRow({ storageKey, inputId, browseId, get, set }) {
+  const input = document.getElementById(inputId);
+  if (!input) return;
+
+  input.value = get();
 
   // Manual text input – validate on change, revert if invalid
-  savePathInput.addEventListener('change', async () => {
-    const newPath = savePathInput.value.trim();
+  input.addEventListener('change', async () => {
+    const newPath = input.value.trim();
     if (!newPath) {
-      savePathInput.value = savePath;
+      input.value = get();
       return;
     }
 
     try {
       const validated = await invoke('gui_set_save_path', { path: newPath });
-      savePath = validated;
-      localStorage.setItem('arnis-save-path', savePath);
+      set(validated);
+      input.value = validated;
+      localStorage.setItem(storageKey, validated);
     } catch (_) {
       // Invalid path – silently revert to previous value
-      savePathInput.value = savePath;
+      input.value = get();
     }
   });
 
   // Folder picker button
-  const browseBtn = document.getElementById('save-path-browse');
+  const browseBtn = document.getElementById(browseId);
   if (browseBtn) {
     browseBtn.addEventListener('click', async () => {
       try {
-        const picked = await invoke('gui_pick_save_directory', { startPath: savePath });
+        const picked = await invoke('gui_pick_save_directory', { startPath: get() });
         if (picked) {
-          savePath = picked;
-          savePathInput.value = savePath;
-          localStorage.setItem('arnis-save-path', savePath);
+          set(picked);
+          input.value = picked;
+          localStorage.setItem(storageKey, picked);
         }
       } catch (error) {
         console.error("Folder picker failed:", error);
@@ -643,8 +2355,8 @@ function handleBboxInput() {
         setBboxSelectionInfo(bboxSelectionInfo, "select_area_prompt", "#ffffff");
       } else {
         // Restore map selection info display but don't update input field
-        const [lng1, lat1, lng2, lat2] = mapSelectedBBox.split(" ").map(Number);
-        const selectedSize = calculateBBoxSize(lng1, lat1, lng2, lat2);
+        const [lat1, lng1, lat2, lng2] = mapSelectedBBox.split(" ").map(Number);
+        const selectedSize = calculateBBoxSize(lat1, lng1, lat2, lng2);
         displayBboxSizeStatus(bboxSelectionInfo, selectedSize);
       }
       return;
@@ -673,15 +2385,29 @@ function handleBboxInput() {
         const bboxText = `${lat1},${lng1},${lat2},${lng2}`;
         window.dispatchEvent(new MessageEvent('message', { data: { bboxText } }));
 
-        // Show custom bbox on the map
-        let map_container = document.querySelector('.map-container');
-        map_container.setAttribute('src', `maps.html#${lat1},${lng1},${lat2},${lng2}`);
-        map_container.contentWindow.location.reload();
+        // Show the typed bbox on the map. Handed over by message rather than
+        // by reloading the frame: setting src and then calling reload() on the
+        // same frame raced - reload() runs against the pre-hash URL, so the
+        // selection could be dropped and the map came back empty. A reload also
+        // throws away every tile already fetched, which is the last thing a slow
+        // or filtered connection can afford.
+        const mapFrame = getMapFrame();
+        if (mapFrame && mapFrame.contentWindow) {
+          mapFrame.contentWindow.postMessage({
+            type: 'setBbox',
+            bounds: [lat1, lng1, lat2, lng2]
+          }, '*');
+        }
 
         // Update the info text and mark custom input as valid
         customBBoxValid = true;
         selectedBBox = bboxText.replace(/,/g, ' '); // Convert to space format for consistency
         setBboxSelectionInfo(bboxSelectionInfo, "custom_selection_confirmed", "#7bd864");
+
+        // Reset rotation when bbox changes via manual input
+        if (typeof window.updateRotation === 'function') {
+          window.updateRotation(0);
+        }
       } else {
         // Valid numbers but invalid order or range
         customBBoxValid = false;
@@ -704,22 +2430,29 @@ function handleBboxInput() {
       }
       setBboxSelectionInfo(bboxSelectionInfo, "invalid_format", "#fecc44");
     }
+    // The Precompute button next to this field turns on the selection, and the
+    // field is inside the same panel, so it has to follow every keystroke.
+    refreshPrecomputeButton();
   });
 }
 
 /**
  * Calculates the approximate area of a bounding box in square meters
  * Uses the Haversine formula for geodesic calculations
- * @param {number} lng1 - First longitude coordinate
- * @param {number} lat1 - First latitude coordinate
- * @param {number} lng2 - Second longitude coordinate
- * @param {number} lat2 - Second latitude coordinate
+ * @param {number} lat1 - South latitude
+ * @param {number} lng1 - West longitude
+ * @param {number} lat2 - North latitude
+ * @param {number} lng2 - East longitude
  * @returns {number} Area in square meters
  */
-function calculateBBoxSize(lng1, lat1, lng2, lat2) {
+// Radii used to turn a bbox into true ground area for the selected body.
+const BODY_RADIUS_M = { earth: 6371000, moon: 1737400, mars: 3396000 };
+
+function calculateBBoxSize(lat1, lng1, lat2, lng2) {
   // Approximate distance calculation using Haversine formula or geodesic formula
   const toRad = (angle) => (angle * Math.PI) / 180;
-  const R = 6371000; // Earth radius in meters
+  // Real ground, not an Earth-sized overestimate: a lunar box reads 13x too large.
+  const R = BODY_RADIUS_M[selectedCelestialBody] || BODY_RADIUS_M.earth;
 
   const latDistance = toRad(lat2 - lat1);
   const lngDistance = toRad(lng2 - lng1);
@@ -745,9 +2478,19 @@ function normalizeLongitude(lon) {
   return ((lon + 180) % 360 + 360) % 360 - 180;
 }
 
-const threshold1 = 44000000.00;  // Yellow warning threshold (~6.2km x 7km)
-const threshold2 = 85000000.00;  // Red error threshold (~8.7km x 9.8km)
-const threshold3 = 500000000.00; // Extreme warning threshold (500 km²)
+// Selection-size warnings, in true square metres of ground. Measured timings and
+// world sizes, square selections:
+//   Earth 1km2 18s/19MB | 4km2 25s/70MB | 9km2 39s/154MB | 25km2 47s/415MB
+//   Moon  2deg 5s/4MB | 5deg 9s/16MB | 10deg 21s/36MB | 20deg 68s/144MB
+//   Mars  2deg 5s/4MB | 5deg 9s/16MB | 10deg 20s/36MB | 20deg 51s/100MB
+// Earth keeps its long-standing tiers, which guard memory more than the clock.
+// The Moon and Mars tiers land near one, three and nine minutes.
+const AREA_THRESHOLDS = {
+  earth: { extensive: 44e6, large: 85e6, extreme: 500e6 },
+  moon: { extensive: 3e11, large: 1e12, extreme: 3e12 },
+  mars: { extensive: 1.5e12, large: 5e12, extreme: 1.5e13 }
+};
+
 let selectedBBox = "";
 let mapSelectedBBox = "";  // Tracks bbox from map selection
 let customBBoxValid = false;  // Tracks if custom input is valid
@@ -758,107 +2501,709 @@ let customBBoxValid = false;  // Tracks if custom input is valid
  * @param {number} selectedSize - The calculated bbox area in square meters
  */
 function displayBboxSizeStatus(bboxSelectionElement, selectedSize) {
-  if (selectedSize > threshold3) {
+  const t = AREA_THRESHOLDS[selectedCelestialBody] || AREA_THRESHOLDS.earth;
+  if (selectedSize > t.extreme) {
     setBboxSelectionInfo(bboxSelectionElement, "area_extreme", "#ff4444");
-  } else if (selectedSize > threshold2) {
+  } else if (selectedSize > t.large) {
     setBboxSelectionInfo(bboxSelectionElement, "area_too_large", "#fa7878");
-  } else if (selectedSize > threshold1) {
+  } else if (selectedSize > t.extensive) {
     setBboxSelectionInfo(bboxSelectionElement, "area_extensive", "#fecc44");
   } else {
     setBboxSelectionInfo(bboxSelectionElement, "selection_confirmed", "#7bd864");
   }
 }
 
+// Re-runs the size status, e.g. after a body switch changes which tiers apply.
+function refreshBboxSelectionInfo() {
+  if (!mapSelectedBBox) return;
+  const [lat1, lng1, lat2, lng2] = mapSelectedBBox.split(" ").map(Number);
+  displayBboxSizeStatus(
+    document.getElementById("bbox-selection-info"),
+    calculateBBoxSize(lat1, lng1, lat2, lng2)
+  );
+}
+
 // Function to handle incoming bbox data
 function displayBboxInfoText(bboxText) {
-  let [lng1, lat1, lng2, lat2] = bboxText.split(" ").map(Number);
+  // Two producers, two separators: the map posts formatBounds output, which is
+  // space separated, while manual coordinate entry synthesizes a comma
+  // separated string. Splitting on " " alone turned the manual one into a
+  // single NaN, which then got written back over the user's half-typed
+  // coordinates as "NaN,NaN,undefined,NaN" - the next keystroke failed the
+  // format check and the selection was gone.
+  // lat,lng,lat,lng throughout - what formatBounds emits, what the manual
+  // input accepts, and what LLBBox::from_str parses on the Rust side. Do not
+  // "fix" this to lng-first; the backend has a comment saying the same.
+  let [lat1, lng1, lat2, lng2] = bboxText.trim().split(/[,\s]+/).map(Number);
 
   // Normalize longitudes
-  lat1 = parseFloat(normalizeLongitude(lat1).toFixed(6));
-  lat2 = parseFloat(normalizeLongitude(lat2).toFixed(6));
-  mapSelectedBBox = `${lng1} ${lat1} ${lng2} ${lat2}`;
-  
+  lng1 = parseFloat(normalizeLongitude(lng1).toFixed(6));
+  lng2 = parseFloat(normalizeLongitude(lng2).toFixed(6));
+  mapSelectedBBox = `${lat1} ${lng1} ${lat2} ${lng2}`;
+
   // Map selection always takes priority - clear custom input and update selectedBBox
   selectedBBox = mapSelectedBBox;
   customBBoxValid = false;
+
+  // Reset rotation when bbox changes
+  if (typeof window.updateRotation === 'function') {
+    window.updateRotation(0);
+  }
 
   const bboxSelectionInfo = document.getElementById("bbox-selection-info");
   const bboxCoordsInput = document.getElementById("bbox-coords");
 
   // Reset the info text if the bbox is 0,0,0,0
-  if (lng1 === 0 && lat1 === 0 && lng2 === 0 && lat2 === 0) {
+  if (lat1 === 0 && lng1 === 0 && lat2 === 0 && lng2 === 0) {
     setBboxSelectionInfo(bboxSelectionInfo, "select_area_prompt", "#ffffff");
     bboxCoordsInput.value = "";
     mapSelectedBBox = "";
     if (!customBBoxValid) {
       selectedBBox = "";
     }
+    window.arnisPreview3D?.onBboxCleared();
+    refreshPrecomputeButton();
     return;
   }
 
-  // Update the custom bbox input with the map selection (comma-separated format)
-  bboxCoordsInput.value = `${lng1},${lat1},${lng2},${lat2}`;
+  // Update the custom bbox input with the map selection (comma-separated
+  // format) - but never type over the user. This also runs as the echo of a
+  // bbox they are entering into this very field, and rewriting it mid-edit
+  // moves the caret so the next keystroke lands in the wrong place.
+  //
+  // The echo is caught by value, not by focus: focus can legitimately be
+  // elsewhere (the map takes it on interaction, and activeElement is
+  // unreliable while the window itself is unfocused) even though the field
+  // still holds what the user typed. The focus check then covers the other
+  // direction - a genuinely different, map-driven selection arriving while
+  // the caret is in the field.
+  const current = bboxCoordsInput.value.trim().split(/[,\s]+/).map(Number);
+  const echoesField = current.length === 4 && current[0] === lat1 &&
+    current[1] === lng1 && current[2] === lat2 && current[3] === lng2;
+  if (!echoesField && document.activeElement !== bboxCoordsInput) {
+    bboxCoordsInput.value = `${lat1},${lng1},${lat2},${lng2}`;
+  }
 
   // Calculate the size of the selected bbox
-  const selectedSize = calculateBBoxSize(lng1, lat1, lng2, lat2);
+  const selectedSize = calculateBBoxSize(lat1, lng1, lat2, lng2);
 
   displayBboxSizeStatus(bboxSelectionInfo, selectedSize);
+
+  // Hide any rendered mini 3D preview if the selection actually changed
+  window.arnisPreview3D?.onBboxChanged(selectedBBox);
+  refreshPrecomputeButton();
 }
 
 let worldPath = "";
 
-/**
- * Validates a world name input.
- * Returns null if valid, or an error message key if invalid.
- */
-function validateWorldName(name) {
-  if (!name) return null;
-  if (!name.trim()) return "world_name_whitespace_only";
-  if (/[<>:"/\\|?*]/.test(name)) return "world_name_invalid_chars";
-  if (/[\x00-\x1f\x7f]/.test(name)) return "world_name_invalid_chars";
-  if (/^[\s.]|[\s.]$/.test(name)) return "world_name_invalid_edges";
-  if (/^(CON|PRN|AUX|NUL|COM\d|LPT\d)$/i.test(name.trim())) return "world_name_reserved";
-  return null;
+// Name of the world the last run made (or is making), as the label shows it.
+// A pending custom name is drawn over it without replacing it.
+let worldLabelName = "";
+
+function setWorldNameLabel(text) {
+  worldLabelName = text || "";
+  renderWorldNameLabel();
 }
 
-async function createWorld() {
-  // Don't create if format is Bedrock (button should be disabled)
-  if (selectedWorldFormat === 'bedrock') return;
-
-  // Don't create if save path hasn't been initialized
-  if (!savePath) {
-    console.warn("Cannot create world: save path not set");
-    return;
-  }
-
-  const nameInput = document.getElementById('world-name-input');
-  const rawName = nameInput.value;
-  const customName = rawName ? rawName.trim() : "";
-
-  const validationError = validateWorldName(rawName);
-  if (validationError) {
-    nameInput.classList.add('input-error');
-    const selectedWorld = document.getElementById('selected-world');
-    localizeElement(window.localization, { element: selectedWorld }, validationError);
-    selectedWorld.style.color = "#fa7878";
-    setTimeout(() => nameInput.classList.remove('input-error'), 2000);
-    return;
-  }
-  nameInput.classList.remove('input-error');
-
-  try {
-    const worldName = await invoke('gui_create_world', { savePath: savePath, customName: customName || null });
-    if (worldName) {
-      worldPath = worldName;
-      const lastSegment = worldName.split(/[\\/]/).pop();
-      document.getElementById('selected-world').textContent = lastSegment;
-      document.getElementById('selected-world').style.color = "#fecc44";
-
-      // Notify that world changed (reset preview)
-      notifyWorldChanged();
+function renderWorldNameLabel() {
+  const label = document.getElementById('world-name-label');
+  if (!label) return;
+  const pending = pendingWorldName();
+  const text = pending || worldLabelName;
+  label.toggleAttribute('data-pending', !!pending);
+  label.title = pending
+    ? (window.localization && window.localization.placeholder_world_name) || 'Name of the next world'
+    : '';
+  if (text) {
+    label.removeAttribute('data-placeholder');
+    label.textContent = text;
+  } else {
+    label.setAttribute('data-placeholder', 'true');
+    // Before the first localization pass there is nothing to look the text up
+    // in, and that pass fills the placeholder itself. Looking it up here
+    // instead fetched English, which arrived after the translation and
+    // overwrote it.
+    if (window.localization) {
+      localizeElement(window.localization, { element: label }, 'no_world_generated_yet');
     }
+  }
+}
+
+function basenameFromPath(p) {
+  if (!p) return "";
+  return p.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || "";
+}
+
+/* Custom world name (Java only, opt-in via Settings > Custom World Name) */
+
+// Name for the next Java world, "" for the default "Arnis World N". The pencil
+// only ever names the world the next Start creates, never one already on disk,
+// and that world uses the name up. Only sent while the setting is on; the
+// backend sanitizes it and appends " (2)" if the folder is taken.
+let customWorldName = "";
+
+function isCustomWorldNameFeatureEnabled() {
+  const toggle = document.getElementById('custom-world-name-toggle');
+  // Custom names are Java-only: creating a Bedrock/Luanti world never calls
+  // gui_create_world, so offering the feature there would silently do
+  // nothing.
+  return !!(toggle && toggle.checked) && selectedWorldFormat === 'java';
+}
+
+// The name the next Start will ask for, if any.
+function pendingWorldName() {
+  if (isOneWorldEnabled() || !isCustomWorldNameFeatureEnabled()) return "";
+  return customWorldName;
+}
+
+function canEditCustomWorldName() {
+  // While a generation is in flight the next world's name is already taken
+  // from here, so an edit would only look like it applied to the running one.
+  return isCustomWorldNameFeatureEnabled() && generationButtonEnabled;
+}
+
+function updateWorldNamePreviewLabel() {
+  if (isOneWorldEnabled()) {
+    setWorldNameLabel(oneWorldDisplayName());
+    return;
+  }
+  renderWorldNameLabel();
+}
+
+// Cancels any in-progress edit and shows/hides the pencil to match the
+// current setting + world format. Safe to call anytime state that affects
+// availability changes (toggle flipped, format switched, language changed).
+function refreshWorldNameEditUI() {
+  endWorldNameEdit();
+  const editButton = document.getElementById('world-name-edit-button');
+  if (editButton) {
+    editButton.style.display = canEditCustomWorldName() ? '' : 'none';
+    const title = isOneWorldEnabled() ? 'Choose the One World to extend or create' : 'Name the next world';
+    editButton.title = title;
+    editButton.setAttribute('aria-label', title);
+  }
+  updateWorldNamePreviewLabel();
+}
+
+// Marks the editor red once it is full. The input's own maxlength is what
+// actually refuses further characters; this only makes that visible. The
+// limit is read off that same attribute rather than duplicating the number
+// here, so the colour can never disagree with what the field accepts.
+function updateWorldNameLimitState() {
+  const input = document.getElementById('world-name-input');
+  if (!input) return;
+  const limit = input.maxLength;
+  if (limit > 0 && input.value.length >= limit) {
+    input.setAttribute('data-at-limit', 'true');
+  } else {
+    input.removeAttribute('data-at-limit');
+  }
+}
+
+function startWorldNameEdit(event) {
+  if (event) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+  if (!canEditCustomWorldName()) return;
+
+  const label = document.getElementById('world-name-label');
+  const input = document.getElementById('world-name-input');
+  const editButton = document.getElementById('world-name-edit-button');
+  if (!label || !input) return;
+
+  // Starts from the pending name, never from the last world's: that world
+  // keeps its name, and asking for it again would only get "Name (2)".
+  input.value = isOneWorldEnabled() ? oneWorldFolderName() : customWorldName;
+  label.style.display = 'none';
+  if (editButton) editButton.style.display = 'none';
+  input.style.display = '';
+  updateWorldNameLimitState();
+  input.focus();
+  input.select();
+}
+
+// Commits the pencil editor: remembers the name for the next generation, or
+// clears it when left blank. Nothing on disk changes.
+function commitWorldNameEdit() {
+  const input = document.getElementById('world-name-input');
+  if (!input) {
+    endWorldNameEdit();
+    return;
+  }
+  const newName = input.value.trim();
+
+  // One World: the name picks the world to extend or create. Nothing is renamed.
+  if (isOneWorldEnabled()) {
+    setOneWorldName(newName === ONE_WORLD_DEFAULT_NAME ? '' : newName);
+    endWorldNameEdit();
+    refreshOneWorldState();
+    return;
+  }
+
+  customWorldName = newName;
+  endWorldNameEdit();
+}
+
+// Hiding the still-focused input fires a native blur (asynchronously, after
+// the handler that hid it has returned), which would otherwise re-enter the
+// blur handler below and re-run the edit we are already finishing: Escape
+// would re-commit what it just discarded.
+// endWorldNameEdit() sets this whenever it hides a focused input.
+let suppressNextWorldNameBlur = false;
+
+// Shared teardown for both commit and cancel: hides the input, restores the
+// label (and the pencil, if the feature is still enabled), and refreshes
+// what the label shows.
+function endWorldNameEdit() {
+  const label = document.getElementById('world-name-label');
+  const input = document.getElementById('world-name-input');
+  const editButton = document.getElementById('world-name-edit-button');
+  if (!input || input.style.display === 'none') return;
+  // Only when the input still holds focus: a teardown reached *from* the blur
+  // handler must not arm this, or it would swallow the next real blur.
+  if (document.activeElement === input) suppressNextWorldNameBlur = true;
+  input.style.display = 'none';
+  if (label) label.style.display = '';
+  if (editButton && canEditCustomWorldName()) editButton.style.display = '';
+  updateWorldNamePreviewLabel();
+}
+
+function initCustomWorldNameToggle() {
+  const toggle = document.getElementById('custom-world-name-toggle');
+  const editButton = document.getElementById('world-name-edit-button');
+  const input = document.getElementById('world-name-input');
+  if (!toggle) return;
+
+  // Covers manual clicks and settings-store restoring/reverting the value
+  // (both dispatch a real "change" event), as long as this listener is
+  // attached before initSettingsStore() runs its restore().
+  toggle.addEventListener('change', refreshWorldNameEditUI);
+
+  if (editButton) {
+    editButton.addEventListener('click', startWorldNameEdit);
+    editButton.addEventListener('mousedown', (event) => event.stopPropagation());
+  }
+
+  if (input) {
+    // The input lives inside .world-name-row, a sibling of #start-button
+    // (not nested inside it) that has its own onclick="startGeneration()"
+    // for clicks on the label/background; without this, placing the caret
+    // would bubble up and trigger that too.
+    input.addEventListener('click', (event) => event.stopPropagation());
+    input.addEventListener('mousedown', (event) => event.stopPropagation());
+    // "input" rather than "keydown": it also covers pasting, cutting and
+    // undo, and fires after the value has actually changed.
+    input.addEventListener('input', updateWorldNameLimitState);
+    input.addEventListener('keydown', (event) => {
+      event.stopPropagation();
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        commitWorldNameEdit();
+      } else if (event.key === 'Escape') {
+        // Discard: tear the editor down without committing.
+        event.preventDefault();
+        endWorldNameEdit();
+      }
+    });
+    input.addEventListener('blur', () => {
+      if (suppressNextWorldNameBlur) {
+        suppressNextWorldNameBlur = false;
+        return;
+      }
+      commitWorldNameEdit();
+    });
+  }
+
+  refreshWorldNameEditUI();
+}
+
+/* One World (Java only, opt-in via Settings > One World) */
+
+const ONE_WORLD_DEFAULT_NAME = "Arnis One World";
+const ONE_WORLD_NAME_KEY = 'arnis-one-world-name';
+// The user's own values of the settings a One World pins, put back when the
+// mode goes off.
+const ONE_WORLD_RESTORE_KEY = 'arnis-one-world-restore';
+// Last answer from gui_one_world_info, null while the mode is off.
+let oneWorldInfo = null;
+let oneWorldPinned = false;
+// Key the map overlays were last sent for.
+let oneWorldOverlayKey = null;
+// Whether the running (or last) generation was a One World run.
+let lastRunOneWorld = false;
+let oneWorldName = localStorage.getItem(ONE_WORLD_NAME_KEY) || '';
+
+function isOneWorldAvailable() {
+  return selectedWorldFormat === 'java' && selectedCelestialBody === 'earth';
+}
+
+function isOneWorldToggleOn() {
+  const toggle = document.getElementById('one-world-toggle');
+  return !!(toggle && toggle.checked);
+}
+
+// Luanti cannot hold a One World, so it is off while the toggle is.
+function refreshLuantiAvailability() {
+  const on = isOneWorldToggleOn();
+  const luantiBtn = document.getElementById('format-luanti');
+  if (luantiBtn) {
+    luantiBtn.disabled = on;
+    luantiBtn.title = on ? 'Luanti is not available in One World mode' : '';
+  }
+  setSettingsRowAvailable('enable-luanti-toggle', !on);
+  if (on && selectedWorldFormat === 'luanti') setWorldFormat('java');
+}
+
+function isOneWorldEnabled() {
+  const toggle = document.getElementById('one-world-toggle');
+  return !!(toggle && toggle.checked) && isOneWorldAvailable();
+}
+
+// The name picks the world; it never renames one on disk.
+function oneWorldFolderName() {
+  if (isCustomWorldNameFeatureEnabled() && oneWorldName) return oneWorldName;
+  return ONE_WORLD_DEFAULT_NAME;
+}
+
+function oneWorldDisplayName() {
+  if (oneWorldInfo && oneWorldInfo.world_path) return basenameFromPath(oneWorldInfo.world_path);
+  return oneWorldFolderName();
+}
+
+function setOneWorldName(name) {
+  oneWorldName = name;
+  if (name) localStorage.setItem(ONE_WORLD_NAME_KEY, name);
+  else localStorage.removeItem(ONE_WORLD_NAME_KEY);
+}
+
+function oneWorldText(key, fallback, vars) {
+  let text = (window.localization && window.localization[key]) || fallback;
+  for (const k in (vars || {})) text = text.split('{' + k + '}').join(vars[k]);
+  return text;
+}
+
+function setOneWorldStatus(text, tone) {
+  const el = document.getElementById('one-world-status');
+  if (!el) return;
+  el.style.display = text ? '' : 'none';
+  el.textContent = text || '';
+  el.classList.toggle('is-warn', tone === 'warn');
+  el.classList.toggle('is-error', tone === 'error');
+}
+
+function renderOneWorldStatus() {
+  const info = oneWorldInfo;
+  if (!isOneWorldEnabled() || !info) return;
+  const name = oneWorldDisplayName();
+  if (!savePath) {
+    setOneWorldStatus(oneWorldText('one_world_no_save_path', 'Set the Minecraft saves folder in Settings first'), 'error');
+    return;
+  }
+  if (info.foreign) {
+    setOneWorldStatus(oneWorldText('one_world_foreign', 'Folder "{name}" exists but is not a One World', { name }), 'error');
+    return;
+  }
+  if (!info.exists) {
+    setOneWorldStatus(oneWorldText('one_world_will_create', 'One World "{name}" will be created', { name }));
+    return;
+  }
+  let text = oneWorldText('one_world_areas', 'One World "{name}" \u00b7 Areas: {count}', { name, count: info.area_count });
+  let tone = '';
+  if (info.locked) {
+    text += ' \u00b7 ' + oneWorldText('one_world_locked', 'open in Minecraft');
+    tone = 'warn';
+  }
+  const mode = document.getElementById('generation-mode-select');
+  const wantsTerrain = mode ? mode.value !== 'geo-only' : true;
+  if (typeof info.terrain === 'boolean' && info.terrain !== wantsTerrain) {
+    text += ' \u00b7 ' + oneWorldText(info.terrain ? 'one_world_needs_terrain' : 'one_world_needs_flat',
+      info.terrain ? 'this world uses terrain' : 'this world is flat');
+    tone = 'warn';
+  }
+  setOneWorldStatus(text, tone);
+}
+
+function setSettingsRowAvailable(inputId, available) {
+  const input = document.getElementById(inputId);
+  if (!input) return;
+  input.disabled = !available;
+  const row = input.closest('.settings-row');
+  if (row) {
+    row.classList.toggle('settings-row-unavailable', !available);
+    row.toggleAttribute('inert', !available);
+  }
+}
+
+function readOneWorldRestore() {
+  try {
+    return JSON.parse(localStorage.getItem(ONE_WORLD_RESTORE_KEY) || '{}') || {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function writeOneWorldRestore(record) {
+  if (Object.keys(record).length) localStorage.setItem(ONE_WORLD_RESTORE_KEY, JSON.stringify(record));
+  else localStorage.removeItem(ONE_WORLD_RESTORE_KEY);
+}
+
+function controlValue(el) {
+  return el.type === 'checkbox' ? el.checked : parseFloat(el.value);
+}
+
+function writeControl(el, value) {
+  if (controlValue(el) === value) return;
+  if (el.type === 'checkbox') el.checked = !!value;
+  else el.value = value;
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+// Pins a control to the world's value, remembering the user's own once.
+// `null` puts the user's value back.
+function pinControl(id, value) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const record = readOneWorldRestore();
+  if (value === null) {
+    if (id in record) {
+      writeControl(el, record[id]);
+      delete record[id];
+      writeOneWorldRestore(record);
+    }
+    return;
+  }
+  if (!(id in record)) {
+    record[id] = controlValue(el);
+    writeOneWorldRestore(record);
+  }
+  writeControl(el, value);
+}
+
+function restoreNaturalRows() {
+  setSettingsRowAvailable('scale-value-slider', selectedCelestialBody === 'earth');
+  setSettingsRowAvailable('height-multiplier-slider', true);
+  setSettingsRowAvailable('aws-only-elevation-toggle', selectedCelestialBody === 'earth');
+  setSettingsRowAvailable('voxy-lod-toggle', true);
+  setSettingsRowAvailable('disable-height-limit-toggle', true);
+  refreshHeightLimitRow();
+}
+
+// Rotation stays 0, the Voxy cache off and the build height extended while
+// the mode is on; scale, build height and elevation source follow the world
+// once it exists.
+function applyOneWorldPins(info) {
+  oneWorldPinned = true;
+  const rotationInput = document.getElementById('rotation-angle-input');
+  if (rotationInput && parseFloat(rotationInput.value) !== 0 && window.updateRotation) window.updateRotation(0);
+  setSettingsRowAvailable('rotation-angle-input', false);
+  setSettingsRowAvailable('voxy-lod-toggle', false);
+  postToMap({ type: 'setRotationLocked', locked: true });
+
+  const exists = !!(info && info.exists);
+  pinControl('scale-value-slider', exists && typeof info.scale === 'number' ? info.scale : null);
+  pinControl('height-multiplier-slider',
+    exists && typeof info.height_multiplier === 'number' ? info.height_multiplier : null);
+  pinControl('disable-height-limit-toggle',
+    exists && typeof info.disable_height_limit === 'boolean' ? info.disable_height_limit : true);
+  restoreNaturalRows();
+  setSettingsRowAvailable('voxy-lod-toggle', false);
+  setSettingsRowAvailable('disable-height-limit-toggle', false);
+  if (exists) {
+    setSettingsRowAvailable('scale-value-slider', false);
+    setSettingsRowAvailable('height-multiplier-slider', false);
+    setSettingsRowAvailable('aws-only-elevation-toggle', false);
+  }
+}
+
+function releaseOneWorldPins() {
+  if (!oneWorldPinned) return;
+  oneWorldPinned = false;
+  pinControl('scale-value-slider', null);
+  pinControl('height-multiplier-slider', null);
+  pinControl('disable-height-limit-toggle', null);
+  setSettingsRowAvailable('rotation-angle-input', true);
+  restoreNaturalRows();
+  postToMap({ type: 'setRotationLocked', locked: false });
+}
+
+function clearOneWorldOverlays() {
+  if (oneWorldOverlayKey === null) return;
+  oneWorldOverlayKey = null;
+  postToMap({ type: 'oneWorldOverlays', areas: [] });
+}
+
+function isWorldNameEditing() {
+  const input = document.getElementById('world-name-input');
+  return !!(input && input.style.display !== 'none');
+}
+
+async function fetchOneWorldInfo() {
+  return invoke('gui_one_world_info', { savePath: savePath, worldName: oneWorldFolderName() });
+}
+
+// Re-reads the world the next area joins. Call whenever something that picks
+// the world changes: toggle, name, save path, format, body, window focus.
+let oneWorldRefreshSeq = 0;
+async function refreshOneWorldState() {
+  const seq = ++oneWorldRefreshSeq;
+  refreshLuantiAvailability();
+  setSettingsRowAvailable('one-world-toggle', isOneWorldAvailable());
+  if (!isOneWorldEnabled()) {
+    const wasOn = oneWorldInfo !== null;
+    oneWorldInfo = null;
+    releaseOneWorldPins();
+    setOneWorldStatus('');
+    clearOneWorldOverlays();
+    if (wasOn) setWorldNameLabel(basenameFromPath(worldPath));
+    if (!isWorldNameEditing()) refreshWorldNameEditUI();
+    return;
+  }
+  if (!savePath) {
+    oneWorldInfo = { exists: false, foreign: false };
+    applyOneWorldPins(oneWorldInfo);
+    renderOneWorldStatus();
+    return;
+  }
+  let info;
+  try {
+    info = await fetchOneWorldInfo();
   } catch (error) {
-    handleWorldSelectionError(error);
+    if (seq !== oneWorldRefreshSeq) return;
+    console.error('Failed to read the One World:', error);
+    oneWorldInfo = null;
+    setOneWorldStatus(String(error), 'error');
+    clearOneWorldOverlays();
+    return;
+  }
+  if (seq !== oneWorldRefreshSeq) return;
+  oneWorldInfo = info;
+  applyOneWorldPins(info);
+  if (!isWorldNameEditing()) refreshWorldNameEditUI();
+  renderOneWorldStatus();
+
+  if (!info.exists || info.foreign) {
+    clearOneWorldOverlays();
+    return;
+  }
+  const key = info.world_path + '|' + info.revision + '|' + info.area_count;
+  if (key === oneWorldOverlayKey) return;
+  try {
+    const overlays = await invoke('gui_get_one_world_overlays', { worldPath: info.world_path });
+    if (seq !== oneWorldRefreshSeq) return;
+    oneWorldOverlayKey = key;
+    postToMap({
+      type: 'oneWorldOverlays',
+      world_path: info.world_path,
+      areas: (overlays && overlays.areas) || [],
+      origin_lat: overlays ? overlays.origin_lat : 0,
+      origin_lon: overlays ? overlays.origin_lon : 0,
+      scale: overlays ? overlays.scale : 1
+    });
+  } catch (error) {
+    console.error('Failed to load the One World overlays:', error);
+  }
+}
+
+// Resolves when the user answers the overlap question.
+function confirmOneWorldOverlap(count) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById('one-world-confirm-modal');
+    const text = document.getElementById('one-world-confirm-text');
+    const ok = document.getElementById('one-world-confirm-ok');
+    const cancel = document.getElementById('one-world-confirm-cancel');
+    const close = document.getElementById('one-world-confirm-close');
+    if (!modal || !text || !ok || !cancel) {
+      resolve(true);
+      return;
+    }
+    text.textContent = oneWorldText('one_world_confirm_text',
+      '{count} chunks of this area already exist in the world. They are generated again, and anything built there in Minecraft is replaced.',
+      { count });
+    const finish = (answer) => {
+      hideModal(modal);
+      ok.removeEventListener('click', onOk);
+      cancel.removeEventListener('click', onCancel);
+      if (close) close.removeEventListener('click', onCancel);
+      document.removeEventListener('keydown', onKey);
+      resolve(answer);
+    };
+    const onOk = () => finish(true);
+    const onCancel = () => finish(false);
+    const onKey = (event) => { if (event.key === 'Escape') finish(false); };
+    ok.addEventListener('click', onOk);
+    cancel.addEventListener('click', onCancel);
+    if (close) close.addEventListener('click', onCancel);
+    document.addEventListener('keydown', onKey);
+    showModal(modal);
+    ok.focus();
+  });
+}
+
+// Checks the world right before a run. Returns false when the run must not start.
+async function prepareOneWorldRun() {
+  if (!savePath) {
+    renderOneWorldStatus();
+    return false;
+  }
+  let info;
+  try {
+    info = await fetchOneWorldInfo();
+  } catch (error) {
+    setOneWorldStatus(String(error), 'error');
+    return false;
+  }
+  oneWorldInfo = info;
+  applyOneWorldPins(info);
+  renderOneWorldStatus();
+  if (info.foreign) return false;
+  if (info.locked) {
+    setOneWorldStatus(oneWorldText('one_world_areas', 'One World "{name}" \u00b7 Areas: {count}',
+      { name: oneWorldDisplayName(), count: info.area_count }) + ' \u00b7 ' +
+      oneWorldText('one_world_locked', 'open in Minecraft'), 'error');
+    return false;
+  }
+  if (!info.exists) return true;
+  let overlap = 0;
+  try {
+    overlap = await invoke('gui_one_world_overlap', {
+      savePath: savePath, worldName: oneWorldFolderName(), bboxText: selectedBBox
+    });
+  } catch (error) {
+    setOneWorldStatus(String(error), 'error');
+    return false;
+  }
+  return overlap > 0 ? confirmOneWorldOverlap(overlap) : true;
+}
+
+function postToMap(message) {
+  const mapFrame = document.querySelector('.map-container');
+  if (mapFrame && mapFrame.contentWindow) {
+    mapFrame.contentWindow.postMessage(message, '*');
+  }
+}
+
+function initOneWorld() {
+  const toggle = document.getElementById('one-world-toggle');
+  if (!toggle) return;
+  // Also fires when the settings store restores the value.
+  toggle.addEventListener('change', refreshOneWorldState);
+  const mode = document.getElementById('generation-mode-select');
+  if (mode) mode.addEventListener('change', renderOneWorldStatus);
+  const nameToggle = document.getElementById('custom-world-name-toggle');
+  if (nameToggle) nameToggle.addEventListener('change', () => { if (isOneWorldEnabled()) refreshOneWorldState(); });
+  // Minecraft may have opened or closed the world meanwhile.
+  window.addEventListener('focus', () => {
+    if (isOneWorldEnabled() && generationButtonEnabled) refreshOneWorldState();
+  });
+  // A reloaded map iframe comes back without overlays.
+  const mapFrame = getMapFrame();
+  if (mapFrame) {
+    mapFrame.addEventListener('load', () => {
+      oneWorldOverlayKey = null;
+      if (isOneWorldEnabled()) refreshOneWorldState();
+    });
   }
 }
 
@@ -871,46 +3216,100 @@ function handleWorldSelectionError(errorCode) {
     1: "minecraft_directory_not_found",
     2: "world_in_use",
     3: "failed_to_create_world",
-    4: "no_world_selected_error",
-    5: "world_name_already_exists"
+    4: "no_world_selected_error"
   };
 
   const errorKey = errorKeys[errorCode] || "unknown_error";
-  const selectedWorld = document.getElementById('selected-world');
-  localizeElement(window.localization, { element: selectedWorld }, errorKey);
-  selectedWorld.style.color = "#fa7878";
+  const progressInfo = document.getElementById('progress-info');
+  localizeElement(window.localization, { element: progressInfo }, errorKey);
+  progressInfo.style.color = "#fa7878";
   worldPath = "";
+  setWorldNameLabel("");
   console.error(errorCode);
 }
 
 let generationButtonEnabled = true;
+
+// Central setter so every place that toggles generation state also
+// refreshes the world-name pencil (hidden/blocked while a generation, or a
+// rename, is in flight - see canEditCustomWorldName()).
+function setGenerationButtonEnabled(enabled) {
+  generationButtonEnabled = enabled;
+  refreshWorldNameEditUI();
+  // The two jobs exclude each other in the backend, so the other one greys out.
+  refreshPrecomputeButton();
+}
+
 /**
  * Initiates the world generation process
  * Validates required inputs and sends generation parameters to the backend
  * @returns {Promise<void>}
  */
 async function startGeneration() {
-  try {
-    if (generationButtonEnabled === false) {
-      return;
+  if (generationButtonEnabled === false) {
+    return;
+  }
+  // The backend refuses this too, but only after gui_create_world has already
+  // made an empty world for a run that is not going to happen. Said here, the
+  // world is never created and the user is told where the machine has gone.
+  if (precomputeRunning) {
+    const info = document.getElementById('progress-info');
+    if (info) {
+      info.textContent = "Waiting for the Mapillary precompute. Cancel it in Settings, or let it finish.";
+      info.style.color = "#fecc44";
     }
+    return;
+  }
+  // Claim the guard before the first await. gui_create_world and gui_start_generation are
+  // both awaited round-trips, so leaving the claim until after them lets a second click
+  // through and starts a parallel run against the same process-global world floor.
+  setGenerationButtonEnabled(false);
+  let started = false;
 
+  try {
     if (!selectedBBox || selectedBBox == "0.000000 0.000000 0.000000 0.000000") {
       const bboxSelectionInfo = document.getElementById('bbox-selection-info');
       setBboxSelectionInfo(bboxSelectionInfo, "select_location_first", "#fa7878");
       return;
     }
 
-    // Only require world creation for Java format (Bedrock generates a new .mcworld file)
-    if (selectedWorldFormat === 'java' && (!worldPath || worldPath === "")) {
-      const selectedWorld = document.getElementById('selected-world');
-      localizeElement(window.localization, { element: selectedWorld }, "create_world_first");
-      selectedWorld.style.color = "#fa7878";
+    // Past every synchronous refusal, so from here the click is a real start.
+    resetProgressUi(STARTING_MESSAGE);
+
+    const oneWorld = isOneWorldEnabled();
+    if (oneWorld && !(await prepareOneWorldRun())) {
+      const info = document.getElementById('progress-info');
+      if (info && info.textContent === STARTING_MESSAGE) info.textContent = "";
       return;
     }
+    lastRunOneWorld = oneWorld;
 
-    // Clear any existing world preview since we're generating a new one
-    notifyWorldChanged();
+    // Auto-create world for Java format (a One World is resolved by the backend)
+    if (selectedWorldFormat === 'java' && !oneWorld) {
+      if (!savePath) {
+        console.warn("Cannot create world: save path not set");
+        return;
+      }
+      try {
+        const requestedName = pendingWorldName() || null;
+        const worldName = await invoke('gui_create_world', { savePath: savePath, worldName: requestedName });
+        if (worldName) {
+          worldPath = worldName;
+          // Used up: the world after this one gets the default name again
+          // unless the pencil names it too.
+          if (requestedName) customWorldName = "";
+          setWorldNameLabel(basenameFromPath(worldName));
+        }
+      } catch (error) {
+        handleWorldSelectionError(error);
+        return;
+      }
+    }
+
+    // Clear any existing world preview since we're generating a new one.
+    // A One World keeps its areas on the map; the new one joins them at the end.
+    if (!oneWorld) notifyWorldChanged();
+    if (oneWorld) setWorldNameLabel(oneWorldFolderName());
 
     // Get the map iframe reference
     const mapFrame = document.querySelector('.map-container');
@@ -930,13 +3329,33 @@ async function startGeneration() {
     var skipOsmObjects = (generationMode === "terrain-only");
 
     var interior = document.getElementById("interior-toggle").checked;
-    var roof = document.getElementById("roof-toggle").checked;
     var fill_ground = document.getElementById("fillground-toggle").checked;
-    var land_cover = document.getElementById("land-cover-toggle").checked;
+    var caves = document.getElementById("caves-toggle").checked;
+    var legacy_trees = document.getElementById("legacy-trees-toggle").checked;
+    var canopy_height = document.getElementById("canopy-height-toggle").checked;
+    var maxTreeSizeBtn = document.querySelector("#max-tree-size-group .segment.active");
+    var maxTreeSize = maxTreeSizeBtn ? maxTreeSizeBtn.dataset.maxTreeSize : "giant";
+    var overture = document.getElementById("overture-toggle").checked;
+    var use_3d = document.getElementById("use-3d-toggle").checked;
+    var heightLimitToggle = document.getElementById("disable-height-limit-toggle");
+    // Disabled means unsupported for this body or format, so never send a stale tick.
+    var disable_height_limit = !heightLimitToggle.disabled && heightLimitToggle.checked;
+    var aws_only_elevation = document.getElementById("aws-only-elevation-toggle").checked;
+    var bake_lighting = document.getElementById("bake-lighting-toggle").checked;
+    var voxy_lod = document.getElementById("voxy-lod-toggle").checked;
+    // arnis-jp: Japan extensions
     var satellite_colors = document.getElementById("satellite-toggle").checked;
     var gsi_enabled = document.getElementById("gsi-toggle").checked;
     var plateau_enabled = document.getElementById("plateau-toggle").checked;
     var scale = parseFloat(document.getElementById("scale-value-slider").value);
+    var heightMultiplier = parseFloat(document.getElementById("height-multiplier-slider").value) || 1;
+    if (oneWorld && oneWorldInfo && oneWorldInfo.exists) {
+      if (typeof oneWorldInfo.scale === 'number') scale = oneWorldInfo.scale;
+      if (typeof oneWorldInfo.height_multiplier === 'number') heightMultiplier = oneWorldInfo.height_multiplier;
+      if (typeof oneWorldInfo.disable_height_limit === 'boolean') disable_height_limit = oneWorldInfo.disable_height_limit;
+    } else if (oneWorld) {
+      disable_height_limit = true;
+    }
     // var ground_level = parseInt(document.getElementById("ground-level").value, 10);
     // DEPRECATED: Ground level input removed from UI
     var ground_level = -62;
@@ -947,32 +3366,86 @@ async function startGeneration() {
     // Get telemetry consent (defaults to false if not set)
     const telemetryConsent = window.getTelemetryConsent ? window.getTelemetryConsent() : false;
 
+    // Get rotation angle
+    var rotationAngle = oneWorld ? 0 : (parseFloat(document.getElementById("rotation-angle-input").value) || 0);
+
+    var gamemodeBtn = document.querySelector("#gamemode-group .segment.active");
+    var gamemode = gamemodeBtn ? gamemodeBtn.dataset.gamemode : "creative";
+    var worldTypeBtn = document.querySelector("#world-type-group .segment.active");
+    var worldType = worldTypeBtn ? worldTypeBtn.dataset.worldType : "void";
+    var mapItem = document.getElementById("map-item-toggle").checked;
+    var signageBtn = document.querySelector("#signage-group .segment.active");
+    var signage = signageBtn ? signageBtn.dataset.signage : "basic";
+    // Clock minutes -> Minecraft ticks (tick 0 = 06:00; 24:00 wraps to 00:00)
+    var clockMinutes = (parseInt(document.getElementById("world-time-slider").value, 10) || 0) % 1440;
+    var worldTime = Math.round(((clockMinutes + 1440 - 360) % 1440) * (24000 / 1440));
+
     // Pass the selected options to the Rust backend
     await invoke("gui_start_generation", {
         bboxText: selectedBBox,
-        selectedWorld: worldPath,
+        selectedWorld: oneWorld ? savePath : worldPath,
+        bedrockSavePath: bedrockSavePath,
+        luantiSavePath: luantiSavePath,
         worldScale: scale,
+        heightMultiplier: heightMultiplier,
         groundLevel: ground_level,
         terrainEnabled: terrain,
         skipOsmObjects: skipOsmObjects,
         interiorEnabled: interior,
-        roofEnabled: roof,
         fillgroundEnabled: fill_ground,
-        landCoverEnabled: land_cover,
-        satelliteColors: satellite_colors,
-        gsiEnabled: gsi_enabled,
-        plateauEnabled: plateau_enabled,
+        cavesEnabled: caves,
+        legacyTreesEnabled: legacy_trees,
+        maxTreeSize: maxTreeSize,
+        canopyHeightEnabled: canopy_height,
+        overtureEnabled: overture,
+        use3dEnabled: use_3d,
+        disableHeightLimit: disable_height_limit,
+        awsOnlyElevation: aws_only_elevation,
+        bakeLightingEnabled: bake_lighting,
+        voxyLodEnabled: voxy_lod,
         isNewWorld: true,
         spawnPoint: spawnPoint,
         telemetryConsent: telemetryConsent || false,
-        worldFormat: selectedWorldFormat
+        worldFormat: getEffectiveWorldFormat(),
+        rotationAngle: rotationAngle,
+        gamemode: gamemode,
+        worldTime: worldTime,
+        worldType: worldType,
+        mapItem: mapItem,
+        signage: signage,
+        mapillaryToken: getMapillaryToken(),
+        facadesEnabled: getFacadesEnabled(),
+        facadeMode: getEffectiveFacadeMode(),
+        buildingFacadesEnabled: getBuildingFacadesEnabled(),
+        facadeDetail: getFacadeDetail(),
+        celestialBodyName: selectedCelestialBody,
+        oneWorld: oneWorld,
+        oneWorldName: oneWorld ? oneWorldFolderName() : "",
+        satelliteColors: satellite_colors,
+        gsiEnabled: gsi_enabled,
+        plateauEnabled: plateau_enabled
     });
 
     console.log("Generation process started.");
-    generationButtonEnabled = false;
+    setEtaSignageExpected(signage !== "none" && getEffectiveWorldFormat() === "java");
+    resetEta();
+    started = true;
+    window.arnisPreview3D?.setGenerationRunning(true);
   } catch (error) {
     console.error("Error starting generation:", error);
-    generationButtonEnabled = true;
+  } finally {
+    // Hand the guard back unless a run actually started; once it has, the Done!/Error!
+    // progress message releases it instead.
+    if (!started) {
+      // Some abort paths say why (handleWorldSelectionError writes here); the
+      // rest would leave our placeholder claiming a run that never began, so
+      // clear it only if nothing else has taken the line since.
+      const info = document.getElementById('progress-info');
+      if (info && info.textContent === STARTING_MESSAGE) info.textContent = "";
+      setGenerationButtonEnabled(true);
+      window.arnisPreview3D?.setGenerationRunning(false);
+    }
+    refreshPrecomputeButton();
   }
 }
 
@@ -985,6 +3458,8 @@ let currentWorldMapData = null;
  * Called when the backend emits the map-preview-ready event
  */
 async function showWorldPreviewButton() {
+  // A One World shows every area at once, reloaded when the run reports Done.
+  if (lastRunOneWorld) return;
   // Try to load the world map data
   await loadWorldMapData();
 
@@ -1020,8 +3495,6 @@ function notifyWorldChanged() {
  * Loads the world map data from the backend
  */
 async function loadWorldMapData() {
-  if (!worldPath) return;
-  
   try {
     const mapData = await invoke('gui_get_world_map_data', { worldPath: worldPath });
     if (mapData) {

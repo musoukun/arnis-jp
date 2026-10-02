@@ -6,7 +6,7 @@ permissions:
 
 on:
   pull_request:
-    types: [opened, reopened]
+    types: [opened, reopened, synchronize]
   issue_comment:
     types: [created]
 
@@ -19,15 +19,16 @@ jobs:
        contains(github.event.comment.body, 'retrigger-benchmark'))
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@v1
+      # Check out the PR head so comment-triggered runs benchmark the PR, not main.
+      - uses: actions/checkout@v7
         with:
-          toolchain: stable
-
-      - uses: Swatinem/rust-cache@v2
+          ref: refs/pull/${{ github.event.pull_request.number || github.event.issue.number }}/head
+      - name: Resolve benchmarked commit
+        id: commit
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/setup-arnis-linux
+        with:
+          gui-deps: "false"
 
       - name: Create dummy Minecraft world directory
         run: |
@@ -43,11 +44,17 @@ jobs:
       - name: Run benchmark command with memory tracking
         id: benchmark
         run: |
-          /usr/bin/time -v ./target/release/arnis --path="./world" --terrain --bbox="48.125768 11.552296 48.148565 11.593838" 2> benchmark_log.txt
+          /usr/bin/time -v ./target/release/arnis --path="./world" --mode=geo-terrain --benchmark --bbox="48.125768 11.552296 48.148565 11.593838" 2> benchmark_log.txt
           grep "Maximum resident set size" benchmark_log.txt | awk '{print $6}' > peak_mem_kb.txt
           peak_kb=$(cat peak_mem_kb.txt)
           peak_mb=$((peak_kb / 1024))
           echo "peak_memory=${peak_mb}" >> $GITHUB_OUTPUT
+          gen_time_ms=$(grep -oP '(?<=generation_time_ms=)\d+' benchmark_log.txt || echo "")
+          gen_time=""
+          if [ -n "$gen_time_ms" ]; then
+            gen_time=$(( (gen_time_ms + 500) / 1000 ))
+          fi
+          echo "gen_time=${gen_time}" >> $GITHUB_OUTPUT
 
       - name: End timer and calculate duration
         id: end_time
@@ -59,32 +66,64 @@ jobs:
 
       - name: Format duration and generate summary
         id: comment_body
+        env:
+          COMMIT_SHA: ${{ steps.commit.outputs.sha }}
         run: |
           duration=${{ steps.end_time.outputs.duration }}
           minutes=$((duration / 60))
           seconds=$((duration % 60))
           peak_mem=${{ steps.benchmark.outputs.peak_memory }}
+          gen_time=${{ steps.benchmark.outputs.gen_time }}
 
-          baseline_time=30
+          baseline_time=17
           diff=$((duration - baseline_time))
           abs_diff=${diff#-}
 
-          if [ "$diff" -lt -5 ]; then
+          # Use generation-only time for the verdict and reported delta when available,
+          # so the two stay consistent instead of mixing wall-clock and generation-only time.
+          if [ -n "$gen_time" ]; then
+            eval_diff=$((gen_time - baseline_time))
+            diff=$eval_diff
+            abs_diff=${diff#-}
+          else
+            eval_diff=$diff
+          fi
+          eval_abs_diff=${eval_diff#-}
+
+          if [ "$eval_diff" -lt -5 ]; then
             verdict="✅ This PR **improves generation time**."
-          elif [ "$abs_diff" -le 4 ]; then
+          elif [ "$eval_abs_diff" -le 4 ]; then
             verdict="🟢 Generation time is unchanged."
-          elif [ "$diff" -le 15 ]; then
+          elif [ "$eval_diff" -le 10 ]; then
             verdict="⚠️ This PR **worsens generation time**."
           else
             verdict="🚨 This PR **drastically worsens generation time**."
           fi
 
-          baseline_mem=935
+          baseline_mem=1068
+          mem_diff=$((peak_mem - baseline_mem))
+          mem_abs_diff=${mem_diff#-}
           mem_annotation=""
-          if [ "$peak_mem" -gt 2000 ]; then
-            mem_diff=$((peak_mem - baseline_mem))
+          if [ "$mem_abs_diff" -gt 30 ]; then
             mem_percent=$((mem_diff * 100 / baseline_mem))
-            mem_annotation=" (↗ ${mem_percent}% more)"
+            mem_abs_percent=${mem_percent#-}
+            if [ "$mem_diff" -gt 0 ]; then
+              mem_annotation=" (↗ ${mem_abs_percent}% more)"
+            else
+              mem_annotation=" (↘ ${mem_abs_percent}% less)"
+            fi
+          fi
+
+          if [ "$mem_diff" -lt -100 ]; then
+            mem_verdict="✅ This PR **drastically reduces peak memory**."
+          elif [ "$mem_diff" -lt -30 ]; then
+            mem_verdict="🌱 This PR **reduces peak memory**."
+          elif [ "$mem_abs_diff" -le 30 ]; then
+            mem_verdict="🟢 Peak memory is unchanged."
+          elif [ "$mem_diff" -le 200 ]; then
+            mem_verdict="⚠️ This PR **increases peak memory**."
+          else
+            mem_verdict="🚨 This PR **drastically increases peak memory**."
           fi
 
           benchmark_time=$(date -u "+%Y-%m-%d %H:%M:%S UTC")
@@ -92,13 +131,17 @@ jobs:
           {
             echo "summary<<EOF"
             echo "⏱️ Benchmark run finished in **${minutes}m ${seconds}s**"
+            if [ -n "$gen_time" ]; then
+              echo "🏗️ Generation time: **${gen_time}s** (excl. data fetching)"
+            fi
             echo "🧠 Peak memory usage: **${peak_mem} MB**${mem_annotation}"
             echo ""
-            echo "📈 Compared against baseline: **${baseline_time}s**"
-            echo "🧮 Delta: **${diff}s**"
-            echo "🔢 Commit: [\`${GITHUB_SHA:0:7}\`](https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA})"
+            echo "📈 Compared against baseline: **${baseline_time}s** time, **${baseline_mem} MB** memory"
+            echo "🧮 Delta: **${diff}s** time, **${mem_diff} MB** memory"
+            echo "🔢 Commit: [\`${COMMIT_SHA:0:7}\`](https://github.com/${GITHUB_REPOSITORY}/commit/${COMMIT_SHA})"
             echo ""
             echo "${verdict}"
+            echo "${mem_verdict}"
             echo ""
             echo "📅 **Last benchmark:** ${benchmark_time}"
             echo ""

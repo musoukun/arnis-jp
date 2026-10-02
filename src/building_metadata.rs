@@ -46,10 +46,13 @@ impl BuildingMetadataCollector {
 
     /// Save all collected building metadata to a JSON file.
     pub fn save_to_json(&self, output_dir: &Path) -> Result<(), String> {
-        let buildings = self.buildings.lock().unwrap();
+        let mut buildings = self.buildings.lock().unwrap();
         if buildings.is_empty() {
             return Ok(());
         }
+
+        // Tiles are generated in parallel; keep the output order stable.
+        buildings.sort_by_key(|b| b.osm_id);
 
         let json_path = output_dir.join("buildings.json");
         let json = serde_json::to_string_pretty(&*buildings)

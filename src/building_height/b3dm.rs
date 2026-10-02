@@ -177,12 +177,7 @@ fn extract_binary_doubles_by_key(
 }
 
 /// Read DOUBLE (f64) values from Batch Table binary.
-fn read_binary_doubles(
-    prop_def: &Value,
-    binary: &[u8],
-    count: usize,
-    out: &mut [Option<f64>],
-) {
+fn read_binary_doubles(prop_def: &Value, binary: &[u8], count: usize, out: &mut [Option<f64>]) {
     let byte_offset = prop_def
         .get("byteOffset")
         .and_then(|v| v.as_u64())
@@ -280,7 +275,8 @@ mod tests {
     #[test]
     fn test_parse_binary_heights() {
         let ft = br#"{"BATCH_LENGTH":2}"#;
-        let bt = br#"{"bldg:measuredHeight":{"byteOffset":0,"componentType":"DOUBLE","type":"SCALAR"}}"#;
+        let bt =
+            br#"{"bldg:measuredHeight":{"byteOffset":0,"componentType":"DOUBLE","type":"SCALAR"}}"#;
 
         let mut binary = Vec::new();
         binary.extend_from_slice(&15.5f64.to_le_bytes());

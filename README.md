@@ -2,15 +2,15 @@
 
 # Arnis [![CI Build Status](https://github.com/louis-e/arnis/actions/workflows/ci-build.yml/badge.svg)](https://github.com/louis-e/arnis/actions) [<img alt="GitHub Release" src="https://img.shields.io/github/v/release/louis-e/arnis" />](https://github.com/louis-e/arnis/releases) [<img alt="GitHub Downloads (all assets, all releases" src="https://img.shields.io/github/downloads/louis-e/arnis/total" />](https://github.com/louis-e/arnis/releases) [![Download here](https://img.shields.io/badge/Download-here-green)](https://github.com/louis-e/arnis/releases) [![Discord](https://img.shields.io/discord/1326192999738249267?label=Discord&color=%237289da)](https://discord.gg/mA2g69Fhxq)
 
-Arnis creates complex and accurate Minecraft Java Edition (1.17+) and Bedrock Edition worlds that reflect real-world geography, topography, and architecture.
+Arnis creates complex and accurate Minecraft Java Edition (1.17+), Bedrock Edition, and Luanti (Minetest) worlds that reflect real-world geography, topography, and architecture.
 
 This free and open source project is designed to handle large-scale geographic data from the real world and generate detailed Minecraft worlds. The algorithm processes geospatial data from OpenStreetMap as well as elevation data to create an accurate Minecraft representation of terrain and architecture.
 Generate your hometown, big cities, and natural landscapes with ease!
 
-_**Want to generate on mobile or want larger maps?** [MapSmith](https://arnismc.com/mapsmith/) generates worlds in your browser, no install required._
+_**Want mobile generation or larger map sizes?** [MapSmith](https://arnismc.com/mapsmith/) generates worlds in your browser, no install required._
 
 ![Minecraft Preview](assets/git/preview.jpg)
-<i>This Github page and [arnismc.com](https://arnismc.com) are the only official project websites. Do not download Arnis from any other website.</i>
+<i>This GitHub page and [arnismc.com](https://arnismc.com) are the only official project websites. Do not download Arnis from any other website.</i>
 
 ## :keyboard: Usage
 <img width="60%" src="assets/git/gui.png"><br>
@@ -30,20 +30,36 @@ Full documentation is available in the [GitHub Wiki](https://github.com/louis-e/
 ## :trophy: Open Source
 #### Key objectives of this project
 - **Modularity**: Ensure that all components (e.g., data fetching, processing, and world generation) are cleanly separated into distinct modules for better maintainability and scalability.
-- **Performance Optimization**: We aim to keep a good performance and speed of the world generation process.
+- **Performance Optimization**: We aim to maintain strong performance and fast world generation.
 - **Comprehensive Documentation**: Detailed in-code documentation for a clear structure and logic.
 - **User-Friendly Experience**: Focus on making the project easy to use for end users.
 - **Cross-Platform Support**: We want this project to run smoothly on Windows, macOS, and Linux.
 
 #### How to contribute
-This project is open source and welcomes contributions from everyone! Whether you're interested in fixing bugs, improving performance, adding new features, or enhancing documentation, your input is valuable. Simply fork the repository, make your changes, and submit a pull request. Please respect the above mentioned key objectives. Contributions of all levels are appreciated, and your efforts help improve this tool for everyone.
+This project is open source and welcomes contributions from everyone! Whether you're interested in fixing bugs, improving performance, adding new features, or enhancing documentation, your input is valuable. Simply fork the repository, make your changes, and submit a pull request. Please respect the above-mentioned key objectives. Contributions of all levels are appreciated, and your efforts help improve this tool for everyone.
 
-Command line Build: ```cargo run --no-default-features -- --terrain --path="C:/YOUR_PATH/.minecraft/saves/worldname" --bbox="min_lat,min_lng,max_lat,max_lng"```<br>
-GUI Build: ```cargo run```<br>
+Command line Build: ```cargo run --release --no-default-features -- --output-dir="C:/YOUR_PATH/.minecraft/saves/worldname" --bbox="min_lat,min_lng,max_lat,max_lng"```<br>
+GUI Build: ```cargo run --release```<br>
 
-After your pull request was merged, I will take care of regularly creating update releases which will include your changes.
+`--mode` selects what gets generated, mirroring the GUI's generation mode dropdown:
 
-If you are using Nix, you can run the program directly with `nix run github:louis-e/arnis -- --terrain --path=YOUR_PATH/.minecraft/saves/worldname --bbox="min_lat,min_lng,max_lat,max_lng"`
+| Mode | Result |
+| --- | --- |
+| `geo-terrain` (default) | Buildings, roads and other OSM objects on real elevation terrain |
+| `geo-only` | OSM objects on flat ground |
+| `terrain-only` | Real elevation terrain, no objects at all (skips the OpenStreetMap query and the Overture fetch entirely, so `--overture` has no effect) |
+
+`--one-world` generates into one persistent Java world that every later run extends (see [docs/one_world.md](docs/one_world.md)); `--output-dir` is then the saves folder and `--world-name` picks the world in it:
+
+```
+cargo run --release --no-default-features -- --one-world --output-dir="C:/YOUR_PATH/.minecraft/saves" --world-name="My City" --bbox="min_lat,min_lng,max_lat,max_lng"
+```
+
+Every area is placed in the same Web Mercator frame, so neighbouring areas join seamlessly; the first run fixes scale, terrain mode and build height, and rotation is off. In the GUI the same mode is the *One World* toggle under Settings > World.
+
+After your pull request is merged, I will take care of regularly creating update releases which will include your changes.
+
+If you are using Nix, you can run the program directly with `nix run github:louis-e/arnis -- --output-dir=YOUR_PATH/.minecraft/saves/worldname --bbox="min_lat,min_lng,max_lat,max_lng"`
 
 ## :star: Star History
 
@@ -71,10 +87,10 @@ Arnis has been recognized in various academic and press publications after gaini
 
 [XDA Developers: Hometown Minecraft Map: Arnis](https://www.xda-developers.com/hometown-minecraft-map-arnis/)
 
-Free to use press assets, including screenshots and logos, can be found [here](https://drive.google.com/file/d/1T1IsZSyT8oa6qAO_40hVF5KR8eEVCJjo/view?usp=sharing).
+Free to use press assets, including screenshots and logos, can be found [here](https://arnismc.com/presskit/).
 
 ## :copyright: License Information
-Copyright (c) 2022-2025 Louis Erbkamm (louis-e)
+Copyright (c) 2022-2026 Louis Erbkamm (louis-e)
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
@@ -88,9 +104,13 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.[^3]
 
+The Luanti block-name mapping in `src/luanti_block_map.rs` is derived from [MC2MT](https://github.com/rollerozxa/MC2MT) by rollerozxa and is licensed under the GNU Lesser General Public License v2.1 or later. The full attribution and license header are preserved in that file.
+
 Download Arnis only from the official source https://arnismc.com or https://github.com/louis-e/arnis/. Every other website providing a download and claiming to be affiliated with the project is unofficial and may be malicious.
 
 The logo was made by @nxfx21.
+
+NOT AN OFFICIAL MINECRAFT PRODUCT. NOT APPROVED BY OR ASSOCIATED WITH MOJANG OR MICROSOFT.
 
 
 [^1]: https://en.wikipedia.org/wiki/OpenStreetMap

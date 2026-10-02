@@ -65,9 +65,18 @@ fn generate_memorial(editor: &mut WorldEditor, node: &ProcessedNode) {
 
     match memorial_type {
         "plaque" => {
-            // Simple plaque on a small stand
+            // Engraved plaque on a nearby wall where one exists, else a small stand carrying it.
+            if crate::element_processing::signage::generate_plaque(editor, node) {
+                return;
+            }
             editor.set_block(STONE_BRICKS, x, 1, z, None, None);
             editor.set_block(STONE_BRICK_SLAB, x, 2, z, None, None);
+            if let Some(key) = crate::element_processing::signage::plaque_key(&node.tags) {
+                let abs_y = editor.get_absolute_y(x, 1, z);
+                for facing in [2i8, 3, 4, 5] {
+                    editor.place_decal(x, abs_y, z, facing, &key);
+                }
+            }
         }
         "statue" | "sculpture" | "bust" => {
             // Statue on a pedestal
@@ -228,8 +237,7 @@ pub fn generate_pyramid(
     }
 
     // Get the footprint via flood fill
-    let footprint: Vec<(i32, i32)> =
-        flood_fill_cache.get_or_compute(element, args.timeout.as_ref());
+    let footprint = flood_fill_cache.get_or_compute(element, args.timeout.as_ref());
     if footprint.is_empty() {
         return;
     }
@@ -237,7 +245,7 @@ pub fn generate_pyramid(
     // Determine base Y from terrain or ground level
     // Use the MINIMUM ground level so the pyramid sits on the lowest point
     // and doesn't float in areas with elevation differences
-    let base_y = if args.terrain {
+    let base_y = if args.terrain() {
         footprint
             .iter()
             .map(|&(x, z)| editor.get_ground_level(x, z))
@@ -279,7 +287,7 @@ pub fn generate_pyramid(
         let y = base_y + 1 + layer;
         let mut placed = false;
 
-        for &(x, z) in &footprint {
+        for &(x, z) in footprint.iter() {
             let dx = (x as f64 - center_x).abs();
             let dz = (z as f64 - center_z).abs();
 

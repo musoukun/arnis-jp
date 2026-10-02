@@ -1,71 +1,735 @@
 use crate::block_definitions::*;
 use crate::bresenham::bresenham_line;
-use crate::osm_parser::ProcessedWay;
+use crate::coordinate_system::cartesian::XZBBox;
+use crate::element_processing::bridge_styles::{
+    decorate_bridge_above_deck, place_arch_below_deck, place_pier_bent,
+    resolve_bridge_style_with_outline, BridgeOutlineIndex, BridgePathSample, BridgeStyle,
+};
+use crate::element_processing::bridges::{BridgeStructureMap, BridgeSurfaceMap, RailDeck};
+use crate::floodfill_cache::CoordinateBitmap;
+use crate::osm_parser::{ProcessedElement, ProcessedWay};
 use crate::world_editor::WorldEditor;
+use std::collections::{HashMap, HashSet};
 
-pub fn generate_railways(editor: &mut WorldEditor, element: &ProcessedWay) {
-    if let Some(railway_type) = element.tags.get("railway") {
-        if [
-            "proposed",
-            "abandoned",
-            "subway",
-            "construction",
-            "razed",
-            "turntable",
-        ]
-        .contains(&railway_type.as_str())
-        {
-            return;
+const CATENARY_MAST_INTERVAL: usize = 16;
+const CATENARY_MAST_OFFSET: i32 = 3;
+const CATENARY_WIRE_HEIGHT: i32 = 6;
+
+/// Vertical offset in blocks from the terrain surface to the tunnel ceiling.
+const RAIL_TUNNEL_DEPTH: i32 = 3;
+
+pub(crate) const RAIL_BRIDGE_FLAT_CLEARANCE: i32 = 4;
+pub(crate) const RAIL_BRIDGE_DIP_THRESHOLD: i32 = 4;
+const RAIL_BRIDGE_RAMP_MIN: usize = 8;
+const RAIL_BRIDGE_RAMP_MAX: usize = 30;
+const RAIL_BRIDGE_RAMP_FRACTION: f32 = 0.25;
+
+pub type RailBridgeInternalEndpoints = HashSet<(i32, i32)>;
+
+const RAIL_TRACK_TYPES: &[&str] = &[
+    "rail",
+    "light_rail",
+    "subway",
+    "tram",
+    "narrow_gauge",
+    "monorail",
+    "funicular",
+    "miniature",
+    "preserved",
+    "disused",
+];
+
+/// Half-width of the outer stone shell (total footprint = 2 * WALL_RADIUS + 1 = 5).
+const WALL_RADIUS: i32 = 2;
+
+/// Half-width of the interior air space (total air width = 2 * AIR_RADIUS + 1 = 3).
+const AIR_RADIUS: i32 = 1;
+
+/// Number of interior Y-levels (rail + 3 air = 4 blocks for minecart clearance).
+const INTERIOR_HEIGHT: i32 = 4;
+
+/// Interval in centerline points between ceiling lights.
+const LIGHT_INTERVAL: usize = 8;
+
+/// Deterministic spatial hash for tunnel wall/ceiling block variety.
+/// Returns CRACKED_STONE_BRICKS (~15%), MOSSY_STONE_BRICKS (~3%),
+/// or STONE_BRICKS (~82%).
+fn rail_tunnel_shell_block(x: i32, y: i32, z: i32) -> Block {
+    let h = (x as u32)
+        .wrapping_mul(73856093)
+        .wrapping_add((y as u32).wrapping_mul(19349663))
+        .wrapping_add((z as u32).wrapping_mul(83492791));
+    let v = h % 100;
+    if v < 15 {
+        CRACKED_STONE_BRICKS
+    } else if v < 18 {
+        MOSSY_STONE_BRICKS
+    } else {
+        STONE_BRICKS
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn generate_railways(
+    editor: &mut WorldEditor,
+    element: &ProcessedWay,
+    rail_tunnel_points: &mut Vec<(i32, i32)>,
+    rail_bridge_internal_endpoints: &RailBridgeInternalEndpoints,
+    bridge_outlines: &BridgeOutlineIndex,
+    bridge_structures: &BridgeStructureMap,
+    bridge_surface: &BridgeSurfaceMap,
+    road_mask: &CoordinateBitmap,
+    building_footprints: &CoordinateBitmap,
+    rail_mask: &CoordinateBitmap,
+) {
+    let Some(railway_type) = element.tags.get("railway") else {
+        return;
+    };
+
+    if wants_rail_tunnel(element) {
+        if renders_as_rail_tunnel(element) {
+            generate_rail_tunnel_shell(editor, element, rail_tunnel_points);
         }
+        return;
+    }
 
-        if let Some(subway) = element.tags.get("subway") {
-            if subway == "yes" {
-                return;
+    if [
+        "proposed",
+        "abandoned",
+        "construction",
+        "razed",
+        "turntable",
+    ]
+    .contains(&railway_type.as_str())
+    {
+        return;
+    }
+
+    if is_rail_bridge(element) {
+        generate_rail_bridge(
+            editor,
+            element,
+            rail_bridge_internal_endpoints,
+            bridge_outlines,
+            bridge_structures,
+            bridge_surface,
+        );
+    } else {
+        generate_at_grade_rail(editor, element);
+        if catenary_wanted(element) {
+            let points = build_smoothed_centerline(element);
+            if points.len() >= 2 {
+                generate_catenary(editor, &points, road_mask, building_footprints, rail_mask);
             }
         }
+    }
+}
 
-        if let Some(tunnel) = element.tags.get("tunnel") {
-            if tunnel == "yes" {
-                return;
+fn renders_as_rail_tunnel(way: &ProcessedWay) -> bool {
+    let Some(railway_type) = way.tags.get("railway").map(String::as_str) else {
+        return false;
+    };
+    if way.nodes.len() < 2
+        || !RAIL_TRACK_TYPES.contains(&railway_type)
+        || way.tags.get("area").map(String::as_str) == Some("yes")
+    {
+        return false;
+    }
+    wants_rail_tunnel(way)
+}
+
+/// Subways run underground unless mapped on a bridge or with tunnel=no.
+fn wants_rail_tunnel(way: &ProcessedWay) -> bool {
+    let tunnel = way.tags.get("tunnel").map(String::as_str);
+    if tunnel == Some("yes") {
+        return true;
+    }
+    let is_subway = way.tags.get("railway").map(String::as_str) == Some("subway")
+        || way.tags.get("subway").map(String::as_str) == Some("yes");
+    is_subway && tunnel != Some("no") && !is_rail_bridge(way)
+}
+
+fn is_rail_bridge(way: &ProcessedWay) -> bool {
+    if way.tags.get("indoor").map(|v| v.as_str()) == Some("yes") {
+        return false;
+    }
+    way.tags
+        .get("bridge")
+        .map(|v| v.as_str())
+        .is_some_and(|v| v != "no")
+}
+
+/// Track laid on the ground.
+pub(crate) fn is_at_grade_track(way: &ProcessedWay) -> bool {
+    let Some(railway_type) = way.tags.get("railway").map(String::as_str) else {
+        return false;
+    };
+    way.nodes.len() >= 2
+        && RAIL_TRACK_TYPES.contains(&railway_type)
+        && way.tags.get("area").map(String::as_str) != Some("yes")
+        && !is_rail_bridge(way)
+        && !wants_rail_tunnel(way)
+}
+
+// Mirrors generate_railways' dispatch so the internal-endpoint set only counts rendered bridges.
+pub(crate) fn renders_as_rail_bridge(way: &ProcessedWay) -> bool {
+    let Some(railway_type) = way.tags.get("railway") else {
+        return false;
+    };
+    if way.nodes.len() < 2 || !is_rail_bridge(way) || wants_rail_tunnel(way) {
+        return false;
+    }
+    if [
+        "proposed",
+        "abandoned",
+        "construction",
+        "razed",
+        "turntable",
+    ]
+    .contains(&railway_type.as_str())
+    {
+        return false;
+    }
+    true
+}
+
+/// Endpoints shared by 2+ rendered rail-bridge ways — used to suppress per-way ramps mid-bridge.
+pub fn collect_rail_bridge_internal_endpoints(
+    elements: &[ProcessedElement],
+) -> RailBridgeInternalEndpoints {
+    let mut counts: HashMap<(i32, i32), u32> = HashMap::new();
+    for elem in elements {
+        let ProcessedElement::Way(w) = elem else {
+            continue;
+        };
+        if !renders_as_rail_bridge(w) {
+            continue;
+        }
+        let s = &w.nodes[0];
+        let e = &w.nodes[w.nodes.len() - 1];
+        *counts.entry((s.x, s.z)).or_default() += 1;
+        if (e.x, e.z) != (s.x, s.z) {
+            *counts.entry((e.x, e.z)).or_default() += 1;
+        }
+    }
+    counts
+        .into_iter()
+        .filter_map(|(k, c)| (c > 1).then_some(k))
+        .collect()
+}
+
+fn generate_at_grade_rail(editor: &mut WorldEditor, element: &ProcessedWay) {
+    // Cumulative cell index across segments so sleeper spacing stays consistent at OSM-node joins.
+    let mut tds: usize = 0;
+    for i in 1..element.nodes.len() {
+        let prev_node = element.nodes[i - 1].xz();
+        let cur_node = element.nodes[i].xz();
+
+        let points = bresenham_line(prev_node.x, 0, prev_node.z, cur_node.x, 0, cur_node.z);
+        let smoothed_points = smooth_diagonal_rails(&points);
+        let skip_first = if i > 1 { 1 } else { 0 };
+
+        for j in skip_first..smoothed_points.len() {
+            let (bx, _, bz) = smoothed_points[j];
+
+            let prev_ground = if j > 0 {
+                let (px, _, pz) = smoothed_points[j - 1];
+                editor.get_ground_level(px, pz)
+            } else {
+                editor.get_ground_level(bx, bz)
+            };
+            let next_ground = if j + 1 < smoothed_points.len() {
+                let (nx, _, nz) = smoothed_points[j + 1];
+                editor.get_ground_level(nx, nz)
+            } else {
+                editor.get_ground_level(bx, bz)
+            };
+            let current_ground = editor.get_ground_level(bx, bz);
+
+            // Fill any vertical gap under the rail when terrain rises step-wise.
+            if prev_ground < current_ground {
+                for fill_y in prev_ground..current_ground {
+                    editor.set_block_absolute(GRAVEL, bx, fill_y, bz, None, None);
+                }
+            }
+
+            editor.set_block(GRAVEL, bx, 0, bz, None, None);
+
+            let prev_xz = if j > 0 {
+                let (px, _, pz) = smoothed_points[j - 1];
+                Some((px, pz))
+            } else {
+                None
+            };
+            let next_xz = if j + 1 < smoothed_points.len() {
+                let (nx, _, nz) = smoothed_points[j + 1];
+                Some((nx, nz))
+            } else {
+                None
+            };
+
+            let rail_block = determine_rail_with_slope(
+                (bx, bz),
+                prev_xz,
+                next_xz,
+                prev_ground,
+                current_ground,
+                next_ground,
+            );
+
+            editor.set_block(rail_block, bx, 1, bz, None, None);
+
+            if tds.is_multiple_of(4) {
+                editor.set_block(OAK_LOG, bx, 0, bz, None, None);
+            }
+            tds += 1;
+        }
+    }
+}
+
+// Overhead line only for real catenary: contact_line, or a best-guess yes on a
+// main/branch line. Never for third rail.
+fn catenary_wanted(way: &ProcessedWay) -> bool {
+    if way.tags.get("railway").map(String::as_str) != Some("rail") {
+        return false;
+    }
+    match way.tags.get("electrified").map(String::as_str) {
+        Some("contact_line") => true,
+        Some("yes") => matches!(
+            way.tags.get("usage").map(String::as_str),
+            Some("main") | Some("branch")
+        ),
+        _ => false,
+    }
+}
+
+pub(crate) fn build_smoothed_centerline(way: &ProcessedWay) -> Vec<(i32, i32)> {
+    let mut points: Vec<(i32, i32)> = Vec::new();
+    for window in way.nodes.windows(2) {
+        let bp = bresenham_line(window[0].x, 0, window[0].z, window[1].x, 0, window[1].z);
+        let smoothed = smooth_diagonal_rails(&bp);
+        for (bx, _, bz) in smoothed.iter() {
+            if points.last() != Some(&(*bx, *bz)) {
+                points.push((*bx, *bz));
             }
         }
+    }
+    points
+}
 
-        for i in 1..element.nodes.len() {
-            let prev_node = element.nodes[i - 1].xz();
-            let cur_node = element.nodes[i].xz();
+fn travel_dir(points: &[(i32, i32)], i: usize) -> (i32, i32) {
+    let (cx, cz) = points[i];
+    if i + 1 < points.len() {
+        let (nx, nz) = points[i + 1];
+        ((nx - cx).signum(), (nz - cz).signum())
+    } else if i > 0 {
+        let (px, pz) = points[i - 1];
+        ((cx - px).signum(), (cz - pz).signum())
+    } else {
+        (1, 0)
+    }
+}
 
-            let points = bresenham_line(prev_node.x, 0, prev_node.z, cur_node.x, 0, cur_node.z);
-            let smoothed_points = smooth_diagonal_rails(&points);
+fn rail_within(mask: &CoordinateBitmap, cx: i32, cz: i32, dx: i32, dz: i32, max_dist: i32) -> bool {
+    (1..=max_dist).any(|d| mask.contains(cx + dx * d, cz + dz * d))
+}
 
-            for j in 0..smoothed_points.len() {
-                let (bx, _, bz) = smoothed_points[j];
+// Rejects a side blocked by a road, building, or a parallel track within the mast footprint.
+fn mast_base_clear(
+    cx: i32,
+    cz: i32,
+    dx: i32,
+    dz: i32,
+    road_mask: &CoordinateBitmap,
+    building_footprints: &CoordinateBitmap,
+    rail_mask: &CoordinateBitmap,
+) -> bool {
+    let (x, z) = (
+        cx + dx * CATENARY_MAST_OFFSET,
+        cz + dz * CATENARY_MAST_OFFSET,
+    );
+    if road_mask.contains(x, z) || building_footprints.contains(x, z) {
+        return false;
+    }
+    !rail_within(rail_mask, cx, cz, dx, dz, CATENARY_MAST_OFFSET + 2)
+}
 
-                editor.set_block(GRAVEL, bx, 0, bz, None, None);
+#[allow(clippy::too_many_arguments)]
+fn place_catenary_mast(
+    editor: &mut WorldEditor,
+    cx: i32,
+    cz: i32,
+    px: i32,
+    pz: i32,
+    wire_abs: i32,
+    road_mask: &CoordinateBitmap,
+    building_footprints: &CoordinateBitmap,
+    rail_mask: &CoordinateBitmap,
+) {
+    // one consistent side, flipped if that side is blocked
+    let side = if mast_base_clear(cx, cz, px, pz, road_mask, building_footprints, rail_mask) {
+        (px, pz)
+    } else if mast_base_clear(cx, cz, -px, -pz, road_mask, building_footprints, rail_mask) {
+        (-px, -pz)
+    } else {
+        return;
+    };
+    let (sx, sz) = side;
+    let (mx, mz) = (
+        cx + sx * CATENARY_MAST_OFFSET,
+        cz + sz * CATENARY_MAST_OFFSET,
+    );
 
-                let prev = if j > 0 {
-                    Some(smoothed_points[j - 1])
-                } else {
-                    None
-                };
-                let next = if j < smoothed_points.len() - 1 {
-                    Some(smoothed_points[j + 1])
-                } else {
-                    None
-                };
+    let mast_ground = editor.get_ground_level(mx, mz);
+    editor.set_block_absolute(GRAY_CONCRETE, mx, mast_ground, mz, None, None);
+    for y in (mast_ground + 1)..=wire_abs {
+        editor.set_block_absolute(COBBLESTONE_WALL, mx, y, mz, None, None);
+    }
 
-                let rail_block = determine_rail_direction(
-                    (bx, bz),
-                    prev.map(|(x, _, z)| (x, z)),
-                    next.map(|(x, _, z)| (x, z)),
-                );
+    let arm = if sx != 0 { CHAIN_X } else { CHAIN_Z };
+    for d in 1..CATENARY_MAST_OFFSET {
+        editor.set_block_absolute(arm, cx + sx * d, wire_abs, cz + sz * d, None, None);
+    }
+}
 
-                editor.set_block(rail_block, bx, 1, bz, None, None);
+// Contact wire over the centreline plus cantilever masts at intervals.
+fn generate_catenary(
+    editor: &mut WorldEditor,
+    points: &[(i32, i32)],
+    road_mask: &CoordinateBitmap,
+    building_footprints: &CoordinateBitmap,
+    rail_mask: &CoordinateBitmap,
+) {
+    let n = points.len();
+    if n < 2 {
+        return;
+    }
 
-                if bx % 4 == 0 {
-                    editor.set_block(OAK_LOG, bx, 0, bz, None, None);
+    for i in 0..n {
+        let (cx, cz) = points[i];
+        let (dx, dz) = travel_dir(points, i);
+        let (px, pz) = (-dz, dx);
+        let wire_abs = editor.get_ground_level(cx, cz) + CATENARY_WIRE_HEIGHT;
+
+        let wire = if dx != 0 { CHAIN_X } else { CHAIN_Z };
+        editor.set_block_absolute(wire, cx, wire_abs, cz, None, None);
+
+        if i.is_multiple_of(CATENARY_MAST_INTERVAL) {
+            place_catenary_mast(
+                editor,
+                cx,
+                cz,
+                px,
+                pz,
+                wire_abs,
+                road_mask,
+                building_footprints,
+                rail_mask,
+            );
+        }
+    }
+}
+
+// At-grade rail centerlines, used only to keep catenary masts off other tracks.
+pub fn collect_at_grade_rail_mask(
+    elements: &[ProcessedElement],
+    xzbbox: &XZBBox,
+) -> CoordinateBitmap {
+    // No catenary anywhere means nothing reads the mask, so skip the allocation.
+    if !elements
+        .iter()
+        .any(|e| matches!(e, ProcessedElement::Way(w) if catenary_wanted(w)))
+    {
+        return CoordinateBitmap::new_empty();
+    }
+    let mut bitmap = CoordinateBitmap::new(xzbbox);
+    for element in elements {
+        let ProcessedElement::Way(way) = element else {
+            continue;
+        };
+        if way.nodes.len() < 2 {
+            continue;
+        }
+        if way.tags.get("railway").map(String::as_str) != Some("rail") {
+            continue;
+        }
+        if way.tags.get("subway").map(|v| v == "yes").unwrap_or(false) {
+            continue;
+        }
+        if way.tags.get("tunnel").map(|v| v == "yes").unwrap_or(false) {
+            continue;
+        }
+        if is_rail_bridge(way) {
+            continue;
+        }
+        for (bx, bz) in build_smoothed_centerline(way) {
+            bitmap.set(bx, bz);
+        }
+    }
+    bitmap
+}
+
+/// Adds every rendered rail-tunnel shell coordinate to the shared tunnel footprint.
+pub fn add_tunnel_footprint(
+    elements: &[ProcessedElement],
+    xzbbox: &XZBBox,
+    footprint: &mut CoordinateBitmap,
+) {
+    if !elements
+        .iter()
+        .any(|e| matches!(e, ProcessedElement::Way(w) if renders_as_rail_tunnel(w)))
+    {
+        return;
+    }
+    if footprint.is_empty() {
+        *footprint = CoordinateBitmap::new(xzbbox);
+    }
+    for element in elements {
+        let ProcessedElement::Way(way) = element else {
+            continue;
+        };
+        if !renders_as_rail_tunnel(way) {
+            continue;
+        }
+        for (bx, bz) in build_smoothed_centerline(way) {
+            for dx in -WALL_RADIUS..=WALL_RADIUS {
+                for dz in -WALL_RADIUS..=WALL_RADIUS {
+                    footprint.set(bx + dx, bz + dz);
                 }
             }
         }
+    }
+}
+
+fn generate_rail_bridge(
+    editor: &mut WorldEditor,
+    way: &ProcessedWay,
+    internal_endpoints: &RailBridgeInternalEndpoints,
+    bridge_outlines: &BridgeOutlineIndex,
+    bridge_structures: &BridgeStructureMap,
+    bridge_surface: &BridgeSurfaceMap,
+) {
+    if way.nodes.len() < 2 {
+        return;
+    }
+
+    let style = resolve_bridge_style_with_outline(way, bridge_outlines);
+
+    let mut all_points: Vec<(i32, i32)> = Vec::new();
+    for window in way.nodes.windows(2) {
+        let bp = bresenham_line(window[0].x, 0, window[0].z, window[1].x, 0, window[1].z);
+        let smoothed = smooth_diagonal_rails(&bp);
+        for (bx, _, bz) in smoothed.iter() {
+            if all_points.last() != Some(&(*bx, *bz)) {
+                all_points.push((*bx, *bz));
+            }
+        }
+    }
+    if all_points.is_empty() {
+        return;
+    }
+
+    // Track on a road deck; the road bridge brings the supports.
+    if let Some(RailDeck::Carried(ys)) = bridge_structures.rail_deck(way.id) {
+        let y_at = |i: usize| ys.get(i).or(ys.last()).copied().unwrap_or_default();
+        for (i, &(bx, bz)) in all_points.iter().enumerate() {
+            let y = y_at(i);
+            let prev = i.checked_sub(1).map(|p| (all_points[p], y_at(p)));
+            let next = all_points.get(i + 1).map(|&n| (n, y_at(i + 1)));
+            let rail_block = determine_rail_with_slope(
+                (bx, bz),
+                prev.map(|p| p.0),
+                next.map(|n| n.0),
+                prev.map_or(y, |p| p.1),
+                y,
+                next.map_or(y, |n| n.1),
+            );
+            editor.set_block_absolute(GRAVEL, bx, y, bz, None, None);
+            editor.set_block_absolute(rail_block, bx, y + 1, bz, None, None);
+        }
+        return;
+    }
+
+    // Sample terrain at every centerline cell, not just OSM nodes, so a hill mid-span still clears the deck.
+    let mut terrain_ys: Vec<i32> = Vec::with_capacity(all_points.len());
+    let mut max_y = i32::MIN;
+    let mut min_y = i32::MAX;
+    for &(bx, bz) in &all_points {
+        let y = editor.get_ground_level(bx, bz);
+        terrain_ys.push(y);
+        max_y = max_y.max(y);
+        min_y = min_y.min(y);
+    }
+    let dip = max_y - min_y;
+    // Shared viaduct level; the fallback covers ways the prescan did not see.
+    let own_level = match bridge_structures.rail_deck(way.id) {
+        Some(RailDeck::Level(y)) => Some(*y),
+        _ => None,
+    };
+    let deck_y = own_level.unwrap_or_else(|| {
+        // Arch needs vertical room for its curve on flat terrain.
+        let flat_clearance = if style == BridgeStyle::Arch {
+            RAIL_BRIDGE_FLAT_CLEARANCE.max(8)
+        } else {
+            RAIL_BRIDGE_FLAT_CLEARANCE
+        };
+        // Flat span: lift by clearance so the structure is visible. Canyon span: deck at terrain_max.
+        if dip < RAIL_BRIDGE_DIP_THRESHOLD {
+            max_y + flat_clearance
+        } else {
+            max_y
+        }
+    });
+
+    let total = all_points.len();
+    let last_idx = total - 1;
+
+    let start_xz = all_points[0];
+    let end_xz = all_points[last_idx];
+    let start_ground = terrain_ys[0];
+    let end_ground = terrain_ys[last_idx];
+    // Shared endpoints stay at deck Y to avoid a mid-bridge dip between adjacent segments.
+    let start_internal = internal_endpoints.contains(&start_xz);
+    let end_internal = internal_endpoints.contains(&end_xz);
+
+    // Ramp length sized so per-cell linear delta stays <= 1 (rail step limit). No horizontal cap:
+    // when needed > total/2 the start/end ramps overlap and min(start, end) below produces a pyramid.
+    let mut needed = 0usize;
+    if !start_internal {
+        needed = needed.max((deck_y - start_ground).max(0) as usize);
+    }
+    if !end_internal {
+        needed = needed.max((deck_y - end_ground).max(0) as usize);
+    }
+    let needed = needed + 1;
+
+    let raw_ramp = (total as f32 * RAIL_BRIDGE_RAMP_FRACTION) as usize;
+    let ramp_length = raw_ramp
+        .clamp(RAIL_BRIDGE_RAMP_MIN, RAIL_BRIDGE_RAMP_MAX)
+        .max(needed);
+    let denom = ramp_length.saturating_sub(1).max(1) as f32;
+
+    let bridge_ys: Vec<i32> = (0..total)
+        .map(|tds| {
+            // Two rising ramps from each endpoint, capped at deck_y. min combines them: trapezoid
+            // for long bridges (both ramps reach deck_y mid-span), pyramid for short ones.
+            let start_ramp_y = if start_internal {
+                deck_y
+            } else {
+                let t = (tds as f32 / denom).min(1.0);
+                let span = (deck_y - start_ground) as f32;
+                (start_ground as f32 + span * t).round() as i32
+            };
+            let end_ramp_y = if end_internal {
+                deck_y
+            } else {
+                let dist_from_end = last_idx.saturating_sub(tds);
+                let t = (dist_from_end as f32 / denom).min(1.0);
+                let span = (deck_y - end_ground) as f32;
+                (end_ground as f32 + span * t).round() as i32
+            };
+            let linear_y = start_ramp_y.min(end_ramp_y);
+            // Clamp to local terrain so a mid-ramp hillside doesn't bury the deck/foundation.
+            linear_y.max(terrain_ys[tds])
+        })
+        .collect();
+
+    let foundation_block = style.foundation_block();
+    let mut bridge_path: Vec<BridgePathSample> = Vec::with_capacity(total);
+    let start_is_boundary = !start_internal;
+    let end_is_boundary = !end_internal;
+    // Suspension and cable-stayed spans hang from their pylons, not from piers.
+    let cables_carry_deck = style.cables_carry_deck(total, start_is_boundary, end_is_boundary);
+
+    for (i, &(bx, bz)) in all_points.iter().enumerate() {
+        let y = bridge_ys[i];
+        let prev_xz = if i > 0 { Some(all_points[i - 1]) } else { None };
+        let next_xz = if i + 1 < total {
+            Some(all_points[i + 1])
+        } else {
+            None
+        };
+        let prev_y = if i > 0 { bridge_ys[i - 1] } else { y };
+        let next_y = if i + 1 < total { bridge_ys[i + 1] } else { y };
+        let rail_block = determine_rail_with_slope((bx, bz), prev_xz, next_xz, prev_y, y, next_y);
+
+        editor.set_block_absolute(foundation_block, bx, y - 1, bz, None, None);
+        let bed_block = if i % 4 == 0 { OAK_LOG } else { GRAVEL };
+        editor.set_block_absolute(bed_block, bx, y, bz, None, None);
+        editor.set_block_absolute(rail_block, bx, y + 1, bz, None, None);
+
+        // Smooth perpendicular from neighbouring centerline points.
+        let p_prev = prev_xz.unwrap_or((bx, bz));
+        let p_next = next_xz.unwrap_or((bx, bz));
+        let dxp = (p_next.0 - p_prev.0) as f32;
+        let dzp = (p_next.1 - p_prev.1) as f32;
+        let mag = (dxp * dxp + dzp * dzp).sqrt().max(1e-6);
+        let perp = (-dzp / mag, dxp / mag);
+        bridge_path.push((bx, y, bz, perp));
+
+        let blocked = bridge_surface.support_blocked(bx, bz, y);
+        if style == BridgeStyle::Arch && !blocked {
+            place_arch_below_deck(editor, bx, y, bz, terrain_ys[i], i, total, true, true);
+        }
+        let interval = style.pier_interval(0);
+        if !cables_carry_deck && interval > 0 && i % interval == interval / 2 {
+            place_pier_bent(editor, bridge_surface, style, bx, bz, y, perp, 0);
+        }
+    }
+
+    decorate_bridge_above_deck(
+        editor,
+        bridge_surface,
+        style,
+        &bridge_path,
+        0,
+        start_is_boundary,
+        end_is_boundary,
+        None,
+    );
+}
+
+/// Choose between a flat or ascending rail block based on the ground-level
+/// difference between the previous, current, and next track points.
+fn determine_rail_with_slope(
+    current: (i32, i32),
+    prev: Option<(i32, i32)>,
+    next: Option<(i32, i32)>,
+    prev_ground: i32,
+    current_ground: i32,
+    next_ground: i32,
+) -> Block {
+    // Ascending toward the *higher* neighbour.
+    if next_ground > current_ground {
+        if let Some((nx, nz)) = next {
+            return ascending_toward(current, (nx, nz));
+        }
+    }
+    if prev_ground > current_ground {
+        if let Some((px, pz)) = prev {
+            return ascending_toward(current, (px, pz));
+        }
+    }
+    // Flat section – fall back to standard direction logic.
+    determine_rail_direction(current, prev, next)
+}
+
+/// Return the ascending rail variant that climbs from `from` toward `to`.
+fn ascending_toward(from: (i32, i32), to: (i32, i32)) -> Block {
+    let (fx, fz) = from;
+    let (tx, tz) = to;
+    let dx = tx - fx;
+    let dz = tz - fz;
+    if dx.abs() >= dz.abs() {
+        if dx > 0 {
+            RAIL_ASCENDING_EAST
+        } else {
+            RAIL_ASCENDING_WEST
+        }
+    } else if dz < 0 {
+        RAIL_ASCENDING_NORTH
+    } else {
+        RAIL_ASCENDING_SOUTH
     }
 }
 
@@ -240,5 +904,537 @@ pub fn generate_roller_coaster(editor: &mut WorldEditor, element: &ProcessedWay)
                 }
             }
         }
+    }
+}
+
+/// Phase 1 of underground railway generation: place the structural tunnel shell and rail
+/// track.  Called during element processing (step 4) so that all non-AIR
+/// blocks survive the underground stone fill in step 6.
+///
+/// Centerline points are collected into `rail_tunnel_points` for phase 2.
+fn generate_rail_tunnel_shell(
+    editor: &mut WorldEditor,
+    element: &ProcessedWay,
+    rail_tunnel_points: &mut Vec<(i32, i32)>,
+) {
+    for i in 1..element.nodes.len() {
+        let prev_node = element.nodes[i - 1].xz();
+        let cur_node = element.nodes[i].xz();
+
+        let points = bresenham_line(prev_node.x, 0, prev_node.z, cur_node.x, 0, cur_node.z);
+        let smoothed = smooth_diagonal_rails(&points);
+
+        for j in 0..smoothed.len() {
+            let (bx, _, bz) = smoothed[j];
+
+            // Record centerline point for phase 2 air-carving, skipping
+            // duplicate shared endpoints between adjacent segments.
+            if rail_tunnel_points.last().copied() != Some((bx, bz)) {
+                rail_tunnel_points.push((bx, bz));
+            }
+
+            let ground_y = editor.get_ground_level(bx, bz);
+            let ceil_y = ground_y - RAIL_TUNNEL_DEPTH;
+            let floor_y = ceil_y - INTERIOR_HEIGHT - 1;
+
+            // Safety: skip if the tunnel would go below world minimum.
+            if floor_y <= crate::world_editor::min_y() {
+                continue;
+            }
+
+            // Ground levels at adjacent points, used for slope-aware rail
+            // placement. Because the tunnel depth is fixed, surface-level
+            // differences map 1:1 to rail-level differences.
+            let prev_ground = if j > 0 {
+                let (px, _, pz) = smoothed[j - 1];
+                editor.get_ground_level(px, pz)
+            } else {
+                ground_y
+            };
+            let next_ground = if j + 1 < smoothed.len() {
+                let (nx, _, nz) = smoothed[j + 1];
+                editor.get_ground_level(nx, nz)
+            } else {
+                ground_y
+            };
+
+            // Place tunnel shell (5x5 footprint, full height).
+            // Interior positions deliberately get non-AIR blocks too so that
+            // the ground fill (skip_existing: true) leaves them alone.
+            // Wall/ceiling blocks get random cracked/mossy variants for variety.
+            for dx in -WALL_RADIUS..=WALL_RADIUS {
+                for dz in -WALL_RADIUS..=WALL_RADIUS {
+                    for y in floor_y..=ceil_y {
+                        let is_wall_or_ceiling =
+                            dx.abs() == WALL_RADIUS || dz.abs() == WALL_RADIUS || y == ceil_y;
+
+                        let block = if y == floor_y {
+                            // Entire floor row: polished deepslate
+                            POLISHED_DEEPSLATE
+                        } else if is_wall_or_ceiling {
+                            // Visible wall/ceiling: mix in cracked and mossy
+                            rail_tunnel_shell_block(bx + dx, y, bz + dz)
+                        } else {
+                            // Interior placeholder (carved in phase 2)
+                            STONE_BRICKS
+                        };
+                        editor.set_block_absolute(block, bx + dx, y, bz + dz, None, None);
+                    }
+                }
+            }
+
+            // Place rail on the structural floor (one above floor_y).
+            let prev_xz = if j > 0 {
+                let (px, _, pz) = smoothed[j - 1];
+                Some((px, pz))
+            } else {
+                None
+            };
+            let next_xz = if j + 1 < smoothed.len() {
+                let (nx, _, nz) = smoothed[j + 1];
+                Some((nx, nz))
+            } else {
+                None
+            };
+
+            let rail_block = determine_rail_with_slope(
+                (bx, bz),
+                prev_xz,
+                next_xz,
+                prev_ground,
+                ground_y,
+                next_ground,
+            );
+            // Whitelist: allow overwriting the STONE_BRICKS placeholder.
+            editor.set_block_absolute(
+                rail_block,
+                bx,
+                floor_y + 1,
+                bz,
+                Some(&[STONE_BRICKS, CRACKED_STONE_BRICKS, MOSSY_STONE_BRICKS]),
+                None,
+            );
+        }
+    }
+}
+
+/// Phase 2 of underground railway generation: carve the 3x3 air interior and place
+/// ceiling lights.  Called AFTER ground generation so that the carved
+/// air blocks are not overwritten by the underground stone fill.
+///
+/// Every tile a tunnel crosses records the whole centerline, so the merged list holds each
+/// point once per tile. A point is carved only the first time: carving just turns
+/// whitelisted blocks to air, and a lantern is never on the whitelist, so a second carve
+/// changes nothing. The lanterns still follow their positions in the full list.
+pub fn carve_rail_tunnel_interior(editor: &mut WorldEditor, rail_tunnel_points: &[(i32, i32)]) {
+    // Whitelist: allow overwriting shell blocks and ground-fill STONE
+    // so the tunnel is actually hollow.
+    let carve_whitelist: &[Block] = &[
+        STONE_BRICKS,
+        CRACKED_STONE_BRICKS,
+        MOSSY_STONE_BRICKS,
+        STONE,
+    ];
+    let mut carved: HashSet<(i32, i32)> = HashSet::with_capacity(rail_tunnel_points.len());
+    for (idx, &(bx, bz)) in rail_tunnel_points.iter().enumerate() {
+        let first = carved.insert((bx, bz));
+        let lantern = idx % LIGHT_INTERVAL == 0;
+        if !first && !lantern {
+            continue;
+        }
+        let ground_y = editor.get_ground_level(bx, bz);
+        let ceil_y = ground_y - RAIL_TUNNEL_DEPTH;
+        let floor_y = ceil_y - INTERIOR_HEIGHT - 1;
+
+        if floor_y <= crate::world_editor::min_y() {
+            continue;
+        }
+
+        if first {
+            for dx in -AIR_RADIUS..=AIR_RADIUS {
+                for dz in -AIR_RADIUS..=AIR_RADIUS {
+                    for y in (floor_y + 1)..ceil_y {
+                        // Skip the center rail block.
+                        if dx == 0 && dz == 0 && y == floor_y + 1 {
+                            continue;
+                        }
+                        editor.set_block_absolute(
+                            AIR,
+                            bx + dx,
+                            y,
+                            bz + dz,
+                            Some(carve_whitelist),
+                            None,
+                        );
+                    }
+                }
+            }
+        }
+
+        // Periodic ceiling lighting.
+        if lantern {
+            editor.set_block_absolute(SEA_LANTERN, bx, ceil_y - 1, bz, None, None);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::coordinate_system::geographic::LLBBox;
+    use crate::osm_parser::ProcessedNode;
+    use std::path::PathBuf;
+
+    fn test_editor(xzbbox: &XZBBox) -> WorldEditor<'_> {
+        let llbbox = LLBBox::new(54.6, 9.9, 54.61, 9.91).unwrap();
+        WorldEditor::new(PathBuf::from("/dev/null/unused"), xzbbox, llbbox)
+    }
+
+    // The same carve as before deduplication: every listed point, in order.
+    fn carve_every_point(editor: &mut WorldEditor, points: &[(i32, i32)]) {
+        let wl: &[Block] = &[
+            STONE_BRICKS,
+            CRACKED_STONE_BRICKS,
+            MOSSY_STONE_BRICKS,
+            STONE,
+        ];
+        for (idx, &(bx, bz)) in points.iter().enumerate() {
+            let ceil_y = editor.get_ground_level(bx, bz) - RAIL_TUNNEL_DEPTH;
+            let floor_y = ceil_y - INTERIOR_HEIGHT - 1;
+            for dx in -AIR_RADIUS..=AIR_RADIUS {
+                for dz in -AIR_RADIUS..=AIR_RADIUS {
+                    for y in (floor_y + 1)..ceil_y {
+                        if !(dx == 0 && dz == 0 && y == floor_y + 1) {
+                            editor.set_block_absolute(AIR, bx + dx, y, bz + dz, Some(wl), None);
+                        }
+                    }
+                }
+            }
+            if idx % LIGHT_INTERVAL == 0 {
+                editor.set_block_absolute(SEA_LANTERN, bx, ceil_y - 1, bz, None, None);
+            }
+        }
+    }
+
+    // Tiles list a tunnel once each; carving each point once must build the same bore,
+    // lanterns included.
+    #[test]
+    fn repeated_tunnel_points_carve_the_same_bore() {
+        let xzbbox = XZBBox::rect_from_min_max(0, 0, 80, 80).unwrap();
+        let line: Vec<(i32, i32)> = (20..=50)
+            .map(|x| (x, 40))
+            .chain((41..=60).map(|z| (50, z)))
+            .collect();
+        // Two tiles' copies, the second starting mid-way, plus a stray repeat.
+        let mut points = line.clone();
+        points.extend_from_slice(&line[7..]);
+        points.extend_from_slice(&line);
+        points.push((33, 40));
+
+        let build = |carve: &dyn Fn(&mut WorldEditor)| {
+            let mut editor = test_editor(&xzbbox);
+            for x in 10..=70 {
+                for z in 30..=70 {
+                    let ground = editor.get_ground_level(x, z);
+                    for y in ground - 12..ground {
+                        let block = if (x + z) % 5 == 0 { RAIL } else { STONE };
+                        editor.set_block_absolute(block, x, y, z, None, None);
+                    }
+                }
+            }
+            carve(&mut editor);
+            let mut cells = Vec::new();
+            for x in 10..=70 {
+                for z in 30..=70 {
+                    let ground = editor.get_ground_level(x, z);
+                    for y in ground - 12..ground {
+                        cells.push(editor.get_block_absolute(x, y, z).map(|b| b.id()));
+                    }
+                }
+            }
+            cells
+        };
+        let want = build(&|e| carve_every_point(e, &points));
+        let got = build(&|e| carve_rail_tunnel_interior(e, &points));
+        assert_eq!(got, want);
+        assert!(got.contains(&Some(SEA_LANTERN.id())));
+    }
+
+    // A straight east-west rail from x=20 to x=60 at z=50 (so cell index == x - 20).
+    fn straight_rail(tags: &[(&str, &str)]) -> ProcessedWay {
+        let mut t = HashMap::new();
+        for (k, v) in tags {
+            t.insert(k.to_string(), v.to_string());
+        }
+        ProcessedWay {
+            id: 1,
+            nodes: vec![
+                ProcessedNode {
+                    id: 1,
+                    tags: HashMap::new(),
+                    x: 20,
+                    z: 50,
+                },
+                ProcessedNode {
+                    id: 2,
+                    tags: HashMap::new(),
+                    x: 60,
+                    z: 50,
+                },
+            ],
+            tags: t,
+        }
+    }
+
+    fn run_collecting_tunnel_points(
+        editor: &mut WorldEditor,
+        way: &ProcessedWay,
+        rail_mask: &CoordinateBitmap,
+    ) -> Vec<(i32, i32)> {
+        let clear = CoordinateBitmap::new(rail_mask_bbox());
+        let mut rail_tunnel_points = Vec::new();
+        let internal = HashSet::new();
+        let outlines = BridgeOutlineIndex::build(&[]);
+        let structures = BridgeStructureMap::build(&[], editor, &outlines, 1.0);
+        generate_railways(
+            editor,
+            way,
+            &mut rail_tunnel_points,
+            &internal,
+            &outlines,
+            &structures,
+            &BridgeSurfaceMap::empty(),
+            &clear,
+            &clear,
+            rail_mask,
+        );
+        rail_tunnel_points
+    }
+
+    fn run(editor: &mut WorldEditor, way: &ProcessedWay, rail_mask: &CoordinateBitmap) {
+        let _ = run_collecting_tunnel_points(editor, way, rail_mask);
+    }
+
+    fn rail_mask_bbox() -> &'static XZBBox {
+        use std::sync::OnceLock;
+        static BBOX: OnceLock<XZBBox> = OnceLock::new();
+        BBOX.get_or_init(|| XZBBox::rect_from_xz_lengths(200.0, 120.0).unwrap())
+    }
+
+    #[test]
+    fn electrified_rail_gets_catenary_over_a_plain_rail() {
+        let xzbbox = XZBBox::rect_from_xz_lengths(200.0, 120.0).unwrap();
+        let mut editor = test_editor(&xzbbox);
+        let way = straight_rail(&[
+            ("railway", "rail"),
+            ("usage", "main"),
+            ("electrified", "contact_line"),
+        ]);
+        run(&mut editor, &way, &CoordinateBitmap::new(&xzbbox));
+
+        assert!(
+            editor.check_for_block(20, 1, 50, Some(&[RAIL_EAST_WEST])),
+            "plain vanilla rail"
+        );
+        assert!(
+            !editor.check_for_block(20, 0, 49, Some(&[ANVIL])),
+            "no decorative rails"
+        );
+        assert!(
+            editor.check_for_block(20, CATENARY_WIRE_HEIGHT, 50, Some(&[CHAIN_X])),
+            "contact wire"
+        );
+        assert!(
+            editor.check_for_block(20, 3, 53, Some(&[COBBLESTONE_WALL])),
+            "mast column"
+        );
+        assert!(
+            editor.check_for_block(20, 0, 53, Some(&[GRAY_CONCRETE])),
+            "mast foundation"
+        );
+    }
+
+    #[test]
+    fn tram_gets_no_catenary() {
+        let xzbbox = XZBBox::rect_from_xz_lengths(200.0, 120.0).unwrap();
+        let mut editor = test_editor(&xzbbox);
+        let way = straight_rail(&[("railway", "tram"), ("electrified", "contact_line")]);
+        run(&mut editor, &way, &CoordinateBitmap::new(&xzbbox));
+
+        assert!(
+            editor.check_for_block(20, 1, 50, Some(&[RAIL_EAST_WEST])),
+            "tram keeps its rail"
+        );
+        assert!(
+            !editor.check_for_block(20, CATENARY_WIRE_HEIGHT, 50, Some(&[CHAIN_X, CHAIN_Z])),
+            "catenary is heavy-rail only"
+        );
+    }
+
+    #[test]
+    fn heavy_rail_tunnel_builds_and_carves_an_underground_track() {
+        let xzbbox = XZBBox::rect_from_xz_lengths(200.0, 120.0).unwrap();
+        let mut editor = test_editor(&xzbbox);
+        let way = straight_rail(&[("railway", "rail"), ("tunnel", "yes")]);
+
+        let rail_tunnel_points =
+            run_collecting_tunnel_points(&mut editor, &way, &CoordinateBitmap::new(&xzbbox));
+        assert_eq!(rail_tunnel_points.len(), 41, "tunnel centerline collected");
+
+        carve_rail_tunnel_interior(&mut editor, &rail_tunnel_points);
+
+        let floor_y = -RAIL_TUNNEL_DEPTH - INTERIOR_HEIGHT - 1;
+        assert!(
+            editor.check_for_block_absolute(20, floor_y + 1, 50, Some(&[RAIL_EAST_WEST]), None,),
+            "rail is preserved on the tunnel floor"
+        );
+        assert!(
+            !editor.check_for_block_absolute(
+                24,
+                floor_y + 2,
+                50,
+                Some(&[
+                    STONE,
+                    STONE_BRICKS,
+                    CRACKED_STONE_BRICKS,
+                    MOSSY_STONE_BRICKS,
+                ]),
+                None,
+            ),
+            "tunnel interior is carved after shell placement"
+        );
+        assert!(
+            editor.check_for_block_absolute(
+                24,
+                floor_y + 2,
+                52,
+                Some(&[STONE_BRICKS, CRACKED_STONE_BRICKS, MOSSY_STONE_BRICKS]),
+                None,
+            ),
+            "tunnel wall remains around the carved interior"
+        );
+        assert!(
+            !editor.check_for_block(24, 1, 50, Some(&[RAIL_EAST_WEST])),
+            "tunnel rail is not rendered at grade"
+        );
+    }
+
+    #[test]
+    fn rail_tunnel_routing_accepts_only_track_ways() {
+        assert!(renders_as_rail_tunnel(&straight_rail(&[
+            ("railway", "rail"),
+            ("tunnel", "yes"),
+        ])));
+        assert!(renders_as_rail_tunnel(&straight_rail(&[(
+            "railway", "subway"
+        )])));
+        assert!(!renders_as_rail_tunnel(&straight_rail(&[
+            ("railway", "rail"),
+            ("tunnel", "yes"),
+            ("area", "yes"),
+        ])));
+        assert!(!renders_as_rail_tunnel(&straight_rail(&[
+            ("railway", "platform"),
+            ("tunnel", "yes"),
+        ])));
+        assert!(!renders_as_rail_tunnel(&straight_rail(&[
+            ("railway", "station"),
+            ("subway", "yes"),
+        ])));
+    }
+
+    #[test]
+    fn elevated_subway_renders_as_bridge_not_tunnel() {
+        let viaduct =
+            straight_rail(&[("railway", "subway"), ("bridge", "viaduct"), ("layer", "2")]);
+        assert!(!renders_as_rail_tunnel(&viaduct));
+        assert!(renders_as_rail_bridge(&viaduct));
+
+        let surface = straight_rail(&[("railway", "subway"), ("tunnel", "no")]);
+        assert!(!renders_as_rail_tunnel(&surface));
+
+        let bored = straight_rail(&[("railway", "subway"), ("bridge", "yes"), ("tunnel", "yes")]);
+        assert!(renders_as_rail_tunnel(&bored));
+        assert!(!renders_as_rail_bridge(&bored));
+    }
+
+    #[test]
+    fn non_track_tunnel_ways_do_not_generate_rails() {
+        let xzbbox = XZBBox::rect_from_xz_lengths(200.0, 120.0).unwrap();
+        for way in [
+            straight_rail(&[("railway", "rail"), ("tunnel", "yes"), ("area", "yes")]),
+            straight_rail(&[("railway", "platform"), ("tunnel", "yes")]),
+            straight_rail(&[("railway", "station"), ("subway", "yes")]),
+        ] {
+            let mut editor = test_editor(&xzbbox);
+            let points =
+                run_collecting_tunnel_points(&mut editor, &way, &CoordinateBitmap::new(&xzbbox));
+            assert!(points.is_empty(), "non-track way must not become a tunnel");
+            assert!(
+                !editor.check_for_block(20, 1, 50, Some(&[RAIL_EAST_WEST])),
+                "non-track way must not fall through to at-grade rail rendering"
+            );
+        }
+    }
+
+    #[test]
+    fn rail_tunnel_footprint_covers_the_full_shell_only_for_tracks() {
+        let xzbbox = XZBBox::rect_from_xz_lengths(200.0, 120.0).unwrap();
+        let non_tracks = vec![
+            ProcessedElement::Way(straight_rail(&[("railway", "platform"), ("tunnel", "yes")])),
+            ProcessedElement::Way(straight_rail(&[("railway", "station"), ("subway", "yes")])),
+        ];
+        let mut footprint = CoordinateBitmap::new_empty();
+        add_tunnel_footprint(&non_tracks, &xzbbox, &mut footprint);
+        assert!(
+            footprint.is_empty(),
+            "platform and station ways do not allocate a tunnel footprint"
+        );
+
+        footprint = CoordinateBitmap::new(&xzbbox);
+        footprint.set(10, 10);
+        let track = vec![ProcessedElement::Way(straight_rail(&[
+            ("railway", "rail"),
+            ("tunnel", "yes"),
+        ]))];
+        add_tunnel_footprint(&track, &xzbbox, &mut footprint);
+
+        assert!(
+            footprint.contains(10, 10),
+            "existing footprint is preserved"
+        );
+        assert!(footprint.contains(40, 50), "track centerline is protected");
+        assert!(footprint.contains(40, 52), "outer tunnel wall is protected");
+        assert!(
+            !footprint.contains(40, 53),
+            "footprint stops outside the 5x5 shell"
+        );
+    }
+
+    #[test]
+    fn catenary_mast_flips_away_from_a_parallel_track() {
+        let xzbbox = XZBBox::rect_from_xz_lengths(200.0, 120.0).unwrap();
+        let mut editor = test_editor(&xzbbox);
+        let way = straight_rail(&[
+            ("railway", "rail"),
+            ("usage", "main"),
+            ("electrified", "contact_line"),
+        ]);
+
+        // Parallel track 4 cells to the +z side (its rail head lands at the +3 mast base).
+        let mut rail_mask = CoordinateBitmap::new(&xzbbox);
+        for x in 18..62 {
+            rail_mask.set(x, 54);
+        }
+        run(&mut editor, &way, &rail_mask);
+
+        assert!(
+            !editor.check_for_block(20, 0, 53, Some(&[GRAY_CONCRETE])),
+            "mast must not stand on the neighbouring track's side"
+        );
+        assert!(
+            editor.check_for_block(20, 0, 47, Some(&[GRAY_CONCRETE])),
+            "mast flips to the clear outer side"
+        );
     }
 }

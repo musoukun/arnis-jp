@@ -1,14 +1,13 @@
 use crate::block_definitions::*;
 use crate::deterministic_rng::coord_rng;
+use crate::element_processing::bridges::BridgeSurfaceMap;
 use crate::floodfill_cache::BuildingFootprintBitmap;
 use crate::world_editor::WorldEditor;
 use rand::Rng;
 
 type Coord = (i32, i32, i32);
 
-// TODO all this data would probably be better suited in a TOML file or something.
-
-/// A circular pattern around a central point.
+// Concentric rings added on top of the trunk column to bulk up the canopy.
 #[rustfmt::skip]
 const ROUND1_PATTERN: [Coord; 8] = [
     (-2, 0, 0),
@@ -21,7 +20,6 @@ const ROUND1_PATTERN: [Coord; 8] = [
     (-1, 0, 1),
 ];
 
-/// A wider circular pattern.
 const ROUND2_PATTERN: [Coord; 12] = [
     (3, 0, 0),
     (2, 0, -1),
@@ -37,7 +35,6 @@ const ROUND2_PATTERN: [Coord; 12] = [
     (0, 0, 3),
 ];
 
-/// A more scattered circular pattern.
 const ROUND3_PATTERN: [Coord; 12] = [
     (3, 0, -1),
     (3, 0, 1),
@@ -53,12 +50,10 @@ const ROUND3_PATTERN: [Coord; 12] = [
     (-1, 0, -3),
 ];
 
-/// Used for iterating over each of the round patterns
 const ROUND_PATTERNS: [&[Coord]; 3] = [&ROUND1_PATTERN, &ROUND2_PATTERN, &ROUND3_PATTERN];
 
-//////////////////////////////////////////////////
-
-const OAK_LEAVES_FILL: [(Coord, Coord); 5] = [
+// Leaves-fill data per (species, variant): y-axis columns around the trunk.
+const OAK_LEAVES_FILL_STANDARD: [(Coord, Coord); 5] = [
     ((-1, 3, 0), (-1, 9, 0)),
     ((1, 3, 0), (1, 9, 0)),
     ((0, 3, -1), (0, 9, -1)),
@@ -66,16 +61,57 @@ const OAK_LEAVES_FILL: [(Coord, Coord); 5] = [
     ((0, 9, 0), (0, 10, 0)),
 ];
 
-const SPRUCE_LEAVES_FILL: [(Coord, Coord); 6] = [
+const OAK_LEAVES_FILL_TALL_SLIM: [(Coord, Coord); 5] = [
+    ((-1, 6, 0), (-1, 11, 0)),
+    ((1, 6, 0), (1, 11, 0)),
+    ((0, 6, -1), (0, 11, -1)),
+    ((0, 6, 1), (0, 11, 1)),
+    ((0, 11, 0), (0, 12, 0)),
+];
+
+const OAK_LEAVES_FILL_BUSHY: [(Coord, Coord); 5] = [
+    ((-1, 3, 0), (-1, 7, 0)),
+    ((1, 3, 0), (1, 7, 0)),
+    ((0, 3, -1), (0, 7, -1)),
+    ((0, 3, 1), (0, 7, 1)),
+    ((0, 7, 0), (0, 8, 0)),
+];
+
+const OAK_LEAVES_FILL_COMPACT: [(Coord, Coord); 5] = [
+    ((-1, 2, 0), (-1, 5, 0)),
+    ((1, 2, 0), (1, 5, 0)),
+    ((0, 2, -1), (0, 5, -1)),
+    ((0, 2, 1), (0, 5, 1)),
+    ((0, 5, 0), (0, 6, 0)),
+];
+
+// Spruce — three variants. Conifer cone shape with cross pattern.
+const SPRUCE_LEAVES_FILL_STANDARD: [(Coord, Coord); 5] = [
     ((-1, 3, 0), (-1, 10, 0)),
     ((0, 3, -1), (0, 10, -1)),
     ((1, 3, 0), (1, 10, 0)),
-    ((0, 3, -1), (0, 10, -1)),
     ((0, 3, 1), (0, 10, 1)),
     ((0, 11, 0), (0, 11, 0)),
 ];
 
-const BIRCH_LEAVES_FILL: [(Coord, Coord); 5] = [
+const SPRUCE_LEAVES_FILL_TOWERING: [(Coord, Coord); 5] = [
+    ((-1, 4, 0), (-1, 13, 0)),
+    ((0, 4, -1), (0, 13, -1)),
+    ((1, 4, 0), (1, 13, 0)),
+    ((0, 4, 1), (0, 13, 1)),
+    ((0, 14, 0), (0, 14, 0)),
+];
+
+const SPRUCE_LEAVES_FILL_SQUAT: [(Coord, Coord); 5] = [
+    ((-1, 2, 0), (-1, 7, 0)),
+    ((0, 2, -1), (0, 7, -1)),
+    ((1, 2, 0), (1, 7, 0)),
+    ((0, 2, 1), (0, 7, 1)),
+    ((0, 8, 0), (0, 8, 0)),
+];
+
+// Birch — three variants. Tall and slender by default.
+const BIRCH_LEAVES_FILL_STANDARD: [(Coord, Coord); 5] = [
     ((-1, 2, 0), (-1, 7, 0)),
     ((1, 2, 0), (1, 7, 0)),
     ((0, 2, -1), (0, 7, -1)),
@@ -83,8 +119,24 @@ const BIRCH_LEAVES_FILL: [(Coord, Coord); 5] = [
     ((0, 7, 0), (0, 8, 0)),
 ];
 
-/// Dark oak: short but wide canopy, leaves start at y=3 up to y=6 with a cap
-const DARK_OAK_LEAVES_FILL: [(Coord, Coord); 5] = [
+const BIRCH_LEAVES_FILL_TALL: [(Coord, Coord); 5] = [
+    ((-1, 5, 0), (-1, 10, 0)),
+    ((1, 5, 0), (1, 10, 0)),
+    ((0, 5, -1), (0, 10, -1)),
+    ((0, 5, 1), (0, 10, 1)),
+    ((0, 10, 0), (0, 11, 0)),
+];
+
+const BIRCH_LEAVES_FILL_CLUSTER: [(Coord, Coord); 5] = [
+    ((-1, 3, 0), (-1, 5, 0)),
+    ((1, 3, 0), (1, 5, 0)),
+    ((0, 3, -1), (0, 5, -1)),
+    ((0, 3, 1), (0, 5, 1)),
+    ((0, 5, 0), (0, 6, 0)),
+];
+
+// Dark oak — three variants. Short trunk, wide canopy.
+const DARK_OAK_LEAVES_FILL_STANDARD: [(Coord, Coord); 5] = [
     ((-1, 3, 0), (-1, 6, 0)),
     ((1, 3, 0), (1, 6, 0)),
     ((0, 3, -1), (0, 6, -1)),
@@ -92,8 +144,24 @@ const DARK_OAK_LEAVES_FILL: [(Coord, Coord); 5] = [
     ((0, 6, 0), (0, 7, 0)),
 ];
 
-/// Jungle: tall tree with canopy only near the top, leaves from y=7 to y=11
-const JUNGLE_LEAVES_FILL: [(Coord, Coord); 5] = [
+const DARK_OAK_LEAVES_FILL_TALL_BUSHY: [(Coord, Coord); 5] = [
+    ((-1, 4, 0), (-1, 9, 0)),
+    ((1, 4, 0), (1, 9, 0)),
+    ((0, 4, -1), (0, 9, -1)),
+    ((0, 4, 1), (0, 9, 1)),
+    ((0, 9, 0), (0, 10, 0)),
+];
+
+const DARK_OAK_LEAVES_FILL_STUNTED: [(Coord, Coord); 5] = [
+    ((-1, 2, 0), (-1, 4, 0)),
+    ((1, 2, 0), (1, 4, 0)),
+    ((0, 2, -1), (0, 4, -1)),
+    ((0, 2, 1), (0, 4, 1)),
+    ((0, 4, 0), (0, 5, 0)),
+];
+
+// Jungle — two variants. Tall trunk, canopy near top.
+const JUNGLE_LEAVES_FILL_STANDARD: [(Coord, Coord); 5] = [
     ((-1, 7, 0), (-1, 11, 0)),
     ((1, 7, 0), (1, 11, 0)),
     ((0, 7, -1), (0, 11, -1)),
@@ -101,8 +169,16 @@ const JUNGLE_LEAVES_FILL: [(Coord, Coord); 5] = [
     ((0, 11, 0), (0, 12, 0)),
 ];
 
-/// Acacia: umbrella-shaped canopy with a gentle dome, leaves from y=5 to y=8
-const ACACIA_LEAVES_FILL: [(Coord, Coord); 5] = [
+const JUNGLE_LEAVES_FILL_BROAD: [(Coord, Coord); 5] = [
+    ((-1, 8, 0), (-1, 12, 0)),
+    ((1, 8, 0), (1, 12, 0)),
+    ((0, 8, -1), (0, 12, -1)),
+    ((0, 8, 1), (0, 12, 1)),
+    ((0, 12, 0), (0, 13, 0)),
+];
+
+// Acacia — two variants. Umbrella canopy.
+const ACACIA_LEAVES_FILL_STANDARD: [(Coord, Coord); 5] = [
     ((-1, 5, 0), (-1, 8, 0)),
     ((1, 5, 0), (1, 8, 0)),
     ((0, 5, -1), (0, 8, -1)),
@@ -110,14 +186,100 @@ const ACACIA_LEAVES_FILL: [(Coord, Coord); 5] = [
     ((0, 8, 0), (0, 9, 0)),
 ];
 
-//////////////////////////////////////////////////
+const ACACIA_LEAVES_FILL_TALL: [(Coord, Coord); 5] = [
+    ((-1, 7, 0), (-1, 10, 0)),
+    ((1, 7, 0), (1, 10, 0)),
+    ((0, 7, -1), (0, 10, -1)),
+    ((0, 7, 1), (0, 10, 1)),
+    ((0, 10, 0), (0, 10, 0)),
+];
 
-/// Helper function to set blocks in various patterns.
-fn round(editor: &mut WorldEditor, material: Block, (x, y, z): Coord, block_pattern: &[Coord]) {
-    for (i, j, k) in block_pattern {
-        editor.set_block(material, x + i, y + j, z + k, None, None);
-    }
-}
+// Cherry — two variants.
+const CHERRY_LEAVES_FILL_STANDARD: [(Coord, Coord); 5] = [
+    ((-1, 4, 0), (-1, 9, 0)),
+    ((1, 4, 0), (1, 9, 0)),
+    ((0, 4, -1), (0, 9, -1)),
+    ((0, 4, 1), (0, 9, 1)),
+    ((0, 9, 0), (0, 10, 0)),
+];
+
+const CHERRY_LEAVES_FILL_WEEPING: [(Coord, Coord); 5] = [
+    ((-1, 3, 0), (-1, 8, 0)),
+    ((1, 3, 0), (1, 8, 0)),
+    ((0, 3, -1), (0, 8, -1)),
+    ((0, 3, 1), (0, 8, 1)),
+    ((0, 8, 0), (0, 9, 0)),
+];
+
+// Tall oak — two variants. Extra-tall oak (kept for compatibility).
+const TALL_OAK_LEAVES_FILL_STANDARD: [(Coord, Coord); 5] = [
+    ((-1, 8, 0), (-1, 12, 0)),
+    ((1, 8, 0), (1, 12, 0)),
+    ((0, 8, -1), (0, 12, -1)),
+    ((0, 8, 1), (0, 12, 1)),
+    ((0, 12, 0), (0, 13, 0)),
+];
+
+const TALL_OAK_LEAVES_FILL_GIANT: [(Coord, Coord); 5] = [
+    ((-1, 9, 0), (-1, 14, 0)),
+    ((1, 9, 0), (1, 14, 0)),
+    ((0, 9, -1), (0, 14, -1)),
+    ((0, 9, 1), (0, 14, 1)),
+    ((0, 14, 0), (0, 15, 0)),
+];
+
+// Pine — two variants. Narrow conifer using spruce blocks.
+const PINE_LEAVES_FILL_STANDARD: [(Coord, Coord); 5] = [
+    ((-1, 5, 0), (-1, 12, 0)),
+    ((0, 5, -1), (0, 12, -1)),
+    ((1, 5, 0), (1, 12, 0)),
+    ((0, 5, 1), (0, 12, 1)),
+    ((0, 13, 0), (0, 13, 0)),
+];
+
+const PINE_LEAVES_FILL_TALL: [(Coord, Coord); 5] = [
+    ((-1, 6, 0), (-1, 15, 0)),
+    ((0, 6, -1), (0, 15, -1)),
+    ((1, 6, 0), (1, 15, 0)),
+    ((0, 6, 1), (0, 15, 1)),
+    ((0, 16, 0), (0, 16, 0)),
+];
+
+// Mangrove — tall, narrow tropical/swamp tree.
+const MANGROVE_LEAVES_FILL: [(Coord, Coord); 5] = [
+    ((-1, 5, 0), (-1, 10, 0)),
+    ((1, 5, 0), (1, 10, 0)),
+    ((0, 5, -1), (0, 10, -1)),
+    ((0, 5, 1), (0, 10, 1)),
+    ((0, 10, 0), (0, 11, 0)),
+];
+
+// Bush — no real trunk; small leaf clump at ground level.
+const BUSH_LEAVES_FILL: [(Coord, Coord); 3] = [
+    ((-1, 0, -1), (1, 1, 1)),
+    ((-1, 2, 0), (1, 2, 0)),
+    ((0, 2, -1), (0, 2, 1)),
+];
+
+// Willow — short trunk, wide canopy. Drooping tendrils added separately.
+const WILLOW_LEAVES_FILL: [(Coord, Coord); 5] = [
+    ((-1, 4, 0), (-1, 7, 0)),
+    ((1, 4, 0), (1, 7, 0)),
+    ((0, 4, -1), (0, 7, -1)),
+    ((0, 4, 1), (0, 7, 1)),
+    ((0, 7, 0), (0, 8, 0)),
+];
+
+const MAX_CANOPY_RADIUS: i32 = 3;
+const CANOPY_SPAN: usize = (MAX_CANOPY_RADIUS * 2 + 1) as usize;
+const CANOPY_CELLS: usize = CANOPY_SPAN * CANOPY_SPAN;
+/// Below this scale even the smallest tree model is taller than the terrain it stands on
+/// (at scale 0.1 a 15-block schematic tree is a 150 m tree), so a proportional blob is used.
+pub const MICRO_TREE_MAX_SCALE: f64 = 0.35;
+/// Nominal mature-tree height in meters, scaled against the equally-scaled terrain.
+const NOMINAL_TREE_HEIGHT_M: f64 = 25.0;
+// Sentinel for a canopy column with no building under it.
+const NO_ROOF: i32 = i32::MIN;
 
 #[derive(Clone, Copy)]
 pub enum TreeType {
@@ -127,76 +289,348 @@ pub enum TreeType {
     DarkOak,
     Jungle,
     Acacia,
+    Cherry,
+    TallOak,
+    Pine,
+    Bush,
+    AzaleaBush,
+    Willow,
+    FloweringOak,
+    Mangrove,
 }
 
-// TODO what should be moved in, and what should be referenced?
-pub struct Tree<'a> {
-    // kind: TreeType, // NOTE: Not actually necessary to store!
+pub struct Tree {
     log_block: Block,
     log_height: i32,
     leaves_block: Block,
-    leaves_fill: &'a [(Coord, Coord)],
+    leaves_fill: &'static [(Coord, Coord)],
     round_ranges: [Vec<i32>; 3],
+    branch_chance: f32,
+    accent_block: Option<Block>,
+    /// 0..100 percent chance per surface leaf to be the accent block.
+    accent_chance: u8,
+    drooping: bool,
 }
 
-impl Tree<'_> {
+struct LeafPlacer<'a> {
+    leaves_block: Block,
+    accent_block: Option<Block>,
+    accent_chance: u8,
+    check_collision: bool,
+    footprints: Option<&'a BuildingFootprintBitmap>,
+    origin: (i32, i32),
+    roof_tops: [i32; CANOPY_CELLS],
+}
+
+// Deterministic per-position hash driving the organic gap and accent rolls.
+fn leaf_hash(x: i32, y: i32, z: i32) -> u64 {
+    (x as i64 as u64).wrapping_mul(73856093)
+        ^ (y as i64 as u64).wrapping_mul(19349663)
+        ^ (z as i64 as u64).wrapping_mul(83492791)
+}
+
+// ~4% organic leaf gap, keyed on the position hash.
+fn leaf_gap_at(h: u64) -> bool {
+    h % 100 < 4
+}
+
+impl LeafPlacer<'_> {
+    #[inline]
+    fn canopy_idx(dx: i32, dz: i32) -> usize {
+        (dx + MAX_CANOPY_RADIUS) as usize * CANOPY_SPAN + (dz + MAX_CANOPY_RADIUS) as usize
+    }
+
+    // Highest building block per canopy column, sampled before any leaf is written so a
+    // tree cannot occlude itself (the apex cap lands before the lower ring leaves).
+    fn sample_roof_tops(
+        editor: &WorldEditor,
+        x: i32,
+        z: i32,
+        base_y: i32,
+        top_y: i32,
+        footprints: Option<&BuildingFootprintBitmap>,
+    ) -> [i32; CANOPY_CELLS] {
+        let mut tops = [NO_ROOF; CANOPY_CELLS];
+        let Some(fp) = footprints else { return tops };
+
+        for dx in -MAX_CANOPY_RADIUS..=MAX_CANOPY_RADIUS {
+            for dz in -MAX_CANOPY_RADIUS..=MAX_CANOPY_RADIUS {
+                let (cx, cz) = (x + dx, z + dz);
+                if !fp.contains(cx, cz) {
+                    continue;
+                }
+                // A footprint column with nothing stamped falls back to culling the whole column.
+                tops[Self::canopy_idx(dx, dz)] = editor
+                    .highest_block_between(cx, cz, base_y, top_y)
+                    .unwrap_or(top_y);
+            }
+        }
+        tops
+    }
+
+    // Cull a leaf only where it would sit at or below the building in its column, so a
+    // canopy still drapes over a low roof instead of being sliced at the footprint edge.
+    fn blocked(&self, x: i32, y: i32, z: i32) -> bool {
+        if !self.check_collision {
+            return false;
+        }
+        let (dx, dz) = (x - self.origin.0, z - self.origin.1);
+        if dx.abs() > MAX_CANOPY_RADIUS || dz.abs() > MAX_CANOPY_RADIUS {
+            return self.footprints.is_some_and(|fp| fp.contains(x, z));
+        }
+        y <= self.roof_tops[Self::canopy_idx(dx, dz)]
+    }
+
+    fn place_core(&self, editor: &mut WorldEditor, x: i32, y: i32, z: i32) {
+        self.place_with(editor, x, y, z, false);
+    }
+
+    // Apex cap: the lone center-column cover over the trunk; skips the organic
+    // gap (but not the footprint gate) so the log is never left exposed.
+    fn place_apex_cap(&self, editor: &mut WorldEditor, x: i32, y: i32, z: i32) {
+        if self.blocked(x, y, z) {
+            return;
+        }
+        editor.set_block_absolute(self.leaves_block, x, y, z, None, None);
+    }
+
+    fn place_surface(&self, editor: &mut WorldEditor, x: i32, y: i32, z: i32) {
+        self.place_with(editor, x, y, z, true);
+    }
+
+    fn place_with(&self, editor: &mut WorldEditor, x: i32, y: i32, z: i32, allow_accent: bool) {
+        // A leaf resting right on water reads as floating.
+        if self.blocked(x, y, z)
+            || editor.check_for_block_absolute(x, y - 1, z, Some(&[WATER]), None)
+        {
+            return;
+        }
+        let h = leaf_hash(x, y, z);
+        if leaf_gap_at(h) {
+            return;
+        }
+        let block = if allow_accent {
+            if let Some(accent) = self.accent_block {
+                let r2 = h.wrapping_mul(2654435761) % 100;
+                if r2 < self.accent_chance as u64 {
+                    accent
+                } else {
+                    self.leaves_block
+                }
+            } else {
+                self.leaves_block
+            }
+        } else {
+            self.leaves_block
+        };
+        editor.set_block_absolute(block, x, y, z, None, None);
+    }
+}
+
+/// Sand beach at (x, z) or a promenade's width away.
+fn near_beach(editor: &WorldEditor, x: i32, z: i32) -> bool {
+    let r = ((12.0 * editor.scale()).round() as i32).clamp(2, 12);
+    [(0, 0), (r, 0), (-r, 0), (0, r), (0, -r)]
+        .iter()
+        .any(|&(dx, dz)| editor.cover_class(x + dx, z + dz) == crate::land_cover::LC_BEACH)
+}
+
+/// Map a chosen `TreeType` to a habitat hint that steers region community selection.
+fn habitat_for_tree_type(t: TreeType) -> crate::trees::region::Habitat {
+    use crate::trees::region::Habitat;
+    match t {
+        TreeType::Spruce | TreeType::Pine => Habitat::Conifer,
+        TreeType::Willow | TreeType::Mangrove => Habitat::Wet,
+        TreeType::Acacia => Habitat::Dry,
+        _ => Habitat::Lowland,
+    }
+}
+
+impl Tree {
+    fn canopy_might_intersect_building(
+        x: i32,
+        z: i32,
+        building_footprints: Option<&BuildingFootprintBitmap>,
+    ) -> bool {
+        let Some(footprints) = building_footprints else {
+            return false;
+        };
+
+        for check_x in (x - MAX_CANOPY_RADIUS)..=(x + MAX_CANOPY_RADIUS) {
+            for check_z in (z - MAX_CANOPY_RADIUS)..=(z + MAX_CANOPY_RADIUS) {
+                if footprints.contains(check_x, check_z) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    /// The species mix for a scattered tree, keyed on the column.
+    fn random_type(x: i32, z: i32) -> TreeType {
+        let mut rng = coord_rng(x, z, 0);
+        match rng.random_range(1..=100) {
+            1..=20 => TreeType::Oak,
+            21..=32 => TreeType::Spruce,
+            33..=44 => TreeType::Birch,
+            45..=50 => TreeType::DarkOak,
+            51..=56 => TreeType::Jungle,
+            57..=62 => TreeType::Acacia,
+            63..=64 => TreeType::Cherry,
+            65..=70 => TreeType::TallOak,
+            71..=77 => TreeType::Pine,
+            78..=84 => TreeType::Bush,
+            85..=88 => TreeType::AzaleaBush,
+            89..=92 => TreeType::Willow,
+            93..=98 => TreeType::FloweringOak,
+            99..=100 => TreeType::Mangrove,
+            _ => unreachable!(),
+        }
+    }
+
     /// Creates a tree at the specified coordinates.
-    ///
-    /// # Arguments
-    /// * `editor` - The world editor to place blocks
-    /// * `(x, y, z)` - The base coordinates for the tree
-    /// * `building_footprints` - Optional bitmap of (x, z) coordinates that are inside buildings.
-    ///   If provided, trees will not be placed at coordinates within this bitmap.
     pub fn create(
         editor: &mut WorldEditor,
         (x, y, z): Coord,
         building_footprints: Option<&BuildingFootprintBitmap>,
+        bridge_surface: Option<&BridgeSurfaceMap>,
     ) {
-        // Use deterministic RNG based on coordinates for consistent tree types across region boundaries
-        // The element_id of 0 is used as a salt for tree-specific randomness
-        let mut rng = coord_rng(x, z, 0);
-
-        let tree_type = match rng.random_range(1..=10) {
-            1..=3 => TreeType::Oak,
-            4..=5 => TreeType::Spruce,
-            6..=7 => TreeType::Birch,
-            8 => TreeType::DarkOak,
-            9 => TreeType::Jungle,
-            10 => TreeType::Acacia,
-            _ => unreachable!(),
-        };
-
-        Self::create_of_type(editor, (x, y, z), tree_type, building_footprints);
+        let tree_type = Self::random_type(x, z);
+        Self::build(
+            editor,
+            (x, y, z),
+            tree_type,
+            building_footprints,
+            bridge_surface,
+            false,
+            false,
+            None,
+            false,
+        );
     }
 
-    /// Creates a tree of a specific type at the specified coordinates.
+    /// Creates a tree the canopy map asked for. The map already fixed the
+    /// density, so the pack must not thin it again.
+    pub fn create_from_canopy(
+        editor: &mut WorldEditor,
+        (x, y, z): Coord,
+        building_footprints: Option<&BuildingFootprintBitmap>,
+        bridge_surface: Option<&BridgeSurfaceMap>,
+    ) {
+        let tree_type = Self::random_type(x, z);
+        Self::build(
+            editor,
+            (x, y, z),
+            tree_type,
+            building_footprints,
+            bridge_surface,
+            false,
+            true,
+            None,
+            false,
+        );
+    }
+
+    /// Creates a tree of a specific type. allow_on_paved is true only for natural=tree nodes.
+    /// `from_tags`: a leaf type or wetland tag chose the type, so it beats the ecoregion mix.
     pub fn create_of_type(
         editor: &mut WorldEditor,
         (x, y, z): Coord,
         tree_type: TreeType,
         building_footprints: Option<&BuildingFootprintBitmap>,
+        bridge_surface: Option<&BridgeSurfaceMap>,
+        allow_on_paved: bool,
+        from_tags: bool,
     ) {
-        // Skip if this coordinate is inside a building
+        Self::build(
+            editor,
+            (x, y, z),
+            tree_type,
+            building_footprints,
+            bridge_surface,
+            allow_on_paved,
+            false,
+            None,
+            from_tags,
+        );
+    }
+
+    /// A tree OSM maps. It may stand on paving and keeps its mapped position.
+    pub fn create_mapped(
+        editor: &mut WorldEditor,
+        (x, y, z): Coord,
+        mapped: &crate::trees::mapped::MappedTree,
+        building_footprints: Option<&BuildingFootprintBitmap>,
+        bridge_surface: Option<&BridgeSurfaceMap>,
+    ) {
+        Self::build(
+            editor,
+            (x, y, z),
+            mapped.kind,
+            building_footprints,
+            bridge_surface,
+            true,
+            true,
+            Some(mapped),
+            false,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build(
+        editor: &mut WorldEditor,
+        (x, y, z): Coord,
+        tree_type: TreeType,
+        building_footprints: Option<&BuildingFootprintBitmap>,
+        bridge_surface: Option<&BridgeSurfaceMap>,
+        allow_on_paved: bool,
+        density_decided: bool,
+        mapped: Option<&crate::trees::mapped::MappedTree>,
+        from_tags: bool,
+    ) {
         if let Some(footprints) = building_footprints {
             if footprints.contains(x, z) {
                 return;
             }
         }
 
-        // Skip if this coordinate is on a road, path, or other paved surface
-        if editor.check_for_block(
-            x,
-            0,
-            z,
-            Some(&[
+        // A request from a tile's halo is the owning tile's to make: the halo copy
+        // runs its own random sequence and would stack a different tree on the
+        // owner's undergrowth. Only the request is checked, so a trunk slot that
+        // snaps across the seam is still planted by the tile that asked.
+        if !editor.owns(x, z) {
+            return;
+        }
+
+        // A tree rooted under a bridge deck would grow straight up through the roadway.
+        if bridge_surface.is_some_and(|b| b.contains(x, z)) {
+            return;
+        }
+
+        // Roads, pitches and other paved areas own their columns. The block check
+        // below cannot see this: a surface=dirt track is dirt like any field, and a
+        // pitch drawn after the park around it has not been painted yet.
+        if !allow_on_paved && editor.surface_is_sealed(x, z) {
+            return;
+        }
+
+        // water always blocked; paved blocked unless allow_on_paved
+        let forbidden_ground: &[Block] = if allow_on_paved {
+            &[WATER]
+        } else {
+            &[
                 BLACK_CONCRETE,
+                GRAY_CONCRETE_POWDER,
+                CYAN_TERRACOTTA,
                 GRAY_CONCRETE,
                 LIGHT_GRAY_CONCRETE,
                 DIRT_PATH,
                 SMOOTH_STONE,
                 WATER,
-            ]),
-        ) {
+            ]
+        };
+        if editor.check_for_block(x, 0, z, Some(forbidden_ground)) {
             return;
         }
 
@@ -207,117 +641,770 @@ impl Tree<'_> {
         blacklist.extend(Self::get_functional_blocks());
         blacklist.push(WATER);
 
-        let tree = Self::get_tree(tree_type);
+        // Salt 1 keeps the shape RNG independent of the type-pick RNG.
+        let mut shape_rng = coord_rng(x, z, 1);
+        let variant_idx: u32 = shape_rng.random();
 
-        // Build the logs
-        editor.fill_blocks(
-            tree.log_block,
-            x,
-            y,
-            z,
-            x,
-            y + tree.log_height,
-            z,
-            None,
-            Some(&blacklist),
-        );
+        let tree = Self::get_tree(tree_type, variant_idx);
+        let check_canopy_collision =
+            Self::canopy_might_intersect_building(x, z, building_footprints);
 
-        // Fill in the leaves
-        for ((i1, j1, k1), (i2, j2, k2)) in tree.leaves_fill {
-            editor.fill_blocks(
-                tree.leaves_block,
-                x + i1,
-                y + j1,
-                z + k1,
-                x + i2,
-                y + j2,
-                z + k2,
+        // One base_y for the whole tree so the canopy doesn't warp to follow terrain.
+        let base_y = editor.get_absolute_y(x, y, z);
+
+        // Both tree models are fixed block sizes, so at low scale they tower over the world.
+        let scale = editor.scale();
+        if scale < MICRO_TREE_MAX_SCALE {
+            let height_m = mapped
+                .and_then(|m| m.height_m)
+                .unwrap_or(NOMINAL_TREE_HEIGHT_M);
+            Self::create_micro(editor, x, base_y, z, &tree, scale, height_m, &blacklist);
+            return;
+        }
+
+        // Schematic pack active: stamp a model instead of the procedural tree (checks above still apply).
+        if let Some(region) = editor.tree_pack() {
+            // same paving rule as above; is_lc_water still blocks water
+            let road_water: &[Block] = if allow_on_paved {
+                &[WATER]
+            } else {
+                &[
+                    BLACK_CONCRETE,
+                    GRAY_CONCRETE_POWDER,
+                    CYAN_TERRACOTTA,
+                    GRAY_CONCRETE,
+                    LIGHT_GRAY_CONCRETE,
+                    DIRT_PATH,
+                    SMOOTH_STONE,
+                    WATER,
+                ]
+            };
+            let hint = habitat_for_tree_type(tree_type);
+            let elev_y = editor.terrain_level(x, z).unwrap_or(base_y);
+            let picked = match mapped {
+                Some(m) => {
+                    // A mapped height beats the canopy map.
+                    let want_size = m
+                        .height_m
+                        .map(|h| {
+                            crate::trees::tree_library::size_for_height((h * scale).round() as i32)
+                        })
+                        .or_else(|| editor.canopy_size_hint(x, z));
+                    let eco = editor.ecoregion(x, z);
+                    let req = crate::trees::region::MappedRequest {
+                        genus: m.genus.as_deref(),
+                        conifer: m.conifer,
+                        want_size,
+                        eco,
+                        beach: eco.is_some() && near_beach(editor, x, z),
+                    };
+                    region.pick_mapped(x, z, hint, elev_y, req)
+                }
+                None => {
+                    // Read at the slot, not the request, so the hint describes the
+                    // column the trunk lands in.
+                    let (hx, hz) =
+                        crate::trees::schematic::trunk_slot_s(x, z, region.base_spacing());
+                    let eco = editor.ecoregion(hx, hz);
+                    let req = crate::trees::region::SlotRequest {
+                        want_size: editor.canopy_size_hint(hx, hz),
+                        density_decided,
+                        eco,
+                        beach: eco.is_some() && near_beach(editor, hx, hz),
+                        tagged: from_tags,
+                        wet_ground: matches!(
+                            editor.cover_class(hx, hz),
+                            crate::land_cover::LC_WETLAND | crate::land_cover::LC_MANGROVES
+                        ),
+                    };
+                    region.pick_slot(x, z, hint, elev_y, req)
+                }
+            };
+            if let Some((sx, sz, idx, rot)) = picked {
+                // A slot across a tile seam would put this tile's trunk on the
+                // neighbour's undergrowth, so the tree keeps to the requested cell.
+                let (sx, sz) = if editor.owns(sx, sz) {
+                    (sx, sz)
+                } else {
+                    (x, z)
+                };
+                // The slot can be a few blocks off (x,z), so every check that
+                // rejected the request has to run again on the moved trunk.
+                // Without the footprint one a tree asked for beside a building
+                // gets snapped onto its roof.
+                if editor.is_lc_water(sx, sz)
+                    || building_footprints.is_some_and(|f| f.contains(sx, sz))
+                    || editor.check_for_block(sx, 0, sz, Some(road_water))
+                    || bridge_surface.is_some_and(|b| b.contains(sx, sz))
+                    || (!allow_on_paved && editor.surface_is_sealed(sx, sz))
+                {
+                    return;
+                }
+                // Clamp the base to <=2 above the lowest footprint ground so it doesn't hover on a cliff.
+                let schem = region.schem(idx);
+                let half = (schem.width.max(schem.length) / 2).clamp(1, 6);
+                let center = editor.get_absolute_y(sx, y, sz);
+                let mut fpmin = center;
+                for (dx, dz) in [
+                    (-half, 0),
+                    (half, 0),
+                    (0, -half),
+                    (0, half),
+                    (-half, -half),
+                    (half, half),
+                    (-half, half),
+                    (half, -half),
+                ] {
+                    fpmin = fpmin.min(editor.get_absolute_y(sx + dx, y, sz + dz));
+                }
+                let slot_base_y = center.min(fpmin + 2);
+                crate::trees::schematic::place_schematic_tree(
+                    editor,
+                    schem,
+                    sx,
+                    sz,
+                    slot_base_y,
+                    rot,
+                    &blacklist,
+                    building_footprints,
+                    y,
+                );
+            }
+            return;
+        }
+
+        // Trunk jitter clamped so the canopy cap always sits above the trunk top.
+        let height_jitter = ((variant_idx >> 8) & 0x3) as i32 - 1;
+        let min_trunk = if tree.log_height == 0 { 0 } else { 2 };
+        let canopy_top = tree
+            .leaves_fill
+            .iter()
+            .map(|((_, _, _), (_, j2, _))| *j2)
+            .max()
+            .unwrap_or(0);
+        let trunk_cap = (canopy_top - 1).max(min_trunk);
+        let trunk_height = (tree.log_height + height_jitter)
+            .max(min_trunk)
+            .min(trunk_cap);
+
+        if tree.log_height > 0 {
+            editor.fill_blocks_absolute(
+                tree.log_block,
+                x,
+                base_y,
+                z,
+                x,
+                base_y + trunk_height,
+                z,
                 None,
-                None,
+                Some(&blacklist),
             );
         }
 
-        // Do the three rounds
-        for (round_range, round_pattern) in tree.round_ranges.iter().zip(ROUND_PATTERNS) {
+        let roof_tops = if check_canopy_collision {
+            LeafPlacer::sample_roof_tops(
+                editor,
+                x,
+                z,
+                base_y,
+                base_y + canopy_top,
+                building_footprints,
+            )
+        } else {
+            [NO_ROOF; CANOPY_CELLS]
+        };
+
+        let placer = LeafPlacer {
+            leaves_block: tree.leaves_block,
+            accent_block: tree.accent_block,
+            accent_chance: tree.accent_chance,
+            check_collision: check_canopy_collision,
+            footprints: building_footprints,
+            origin: (x, z),
+            roof_tops,
+        };
+
+        // Inner canopy columns — accent only on the outermost ring (below).
+        for ((i1, j1, k1), (i2, j2, k2)) in tree.leaves_fill {
+            for leaf_x in (x + i1)..=(x + i2) {
+                for leaf_y in (base_y + j1)..=(base_y + j2) {
+                    for leaf_z in (z + k1)..=(z + k2) {
+                        placer.place_core(editor, leaf_x, leaf_y, leaf_z);
+                    }
+                }
+            }
+        }
+
+        // Force the apex so the organic gap never leaves the trunk top exposed.
+        placer.place_apex_cap(editor, x, base_y + canopy_top, z);
+
+        // Only the outermost non-empty ring gets surface (accent-eligible) leaves.
+        let outermost_ring_idx: Option<usize> = tree
+            .round_ranges
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, r)| !r.is_empty())
+            .map(|(i, _)| i);
+        for (idx, (round_range, round_pattern)) in
+            tree.round_ranges.iter().zip(ROUND_PATTERNS).enumerate()
+        {
+            let is_surface = Some(idx) == outermost_ring_idx;
             for offset in round_range {
-                round(editor, tree.leaves_block, (x, y + offset, z), round_pattern);
+                for &(i, j, k) in round_pattern {
+                    let lx = x + i;
+                    let ly = base_y + offset + j;
+                    let lz = z + k;
+                    if is_surface {
+                        placer.place_surface(editor, lx, ly, lz);
+                    } else {
+                        placer.place_core(editor, lx, ly, lz);
+                    }
+                }
+            }
+        }
+
+        let branch_roll = ((variant_idx >> 16) & 0xFF) as f32 / 255.0;
+        if branch_roll < tree.branch_chance && trunk_height >= 5 {
+            let (dx, dz) = match (variant_idx >> 24) & 0x3 {
+                0 => (1, 0),
+                1 => (-1, 0),
+                2 => (0, 1),
+                _ => (0, -1),
+            };
+            let branch_y_off = trunk_height - 2 - ((variant_idx >> 12) & 0x1) as i32;
+            let branch_y = base_y + branch_y_off;
+            for step in 1..=2 {
+                editor.set_block_absolute(
+                    tree.log_block,
+                    x + dx * step,
+                    branch_y,
+                    z + dz * step,
+                    None,
+                    Some(&blacklist),
+                );
+            }
+            // Tapered cluster (Manhattan <= 2): rounder than a 3x3x3 cube.
+            let tip_x = x + dx * 2;
+            let tip_z = z + dz * 2;
+            for ddx in -1i32..=1 {
+                for ddy in -1i32..=1 {
+                    for ddz in -1i32..=1 {
+                        if ddx.abs() + ddy.abs() + ddz.abs() <= 2 {
+                            placer.place_surface(editor, tip_x + ddx, branch_y + ddy, tip_z + ddz);
+                        }
+                    }
+                }
+            }
+        }
+
+        if tree.drooping {
+            let droop_dirs: [(i32, i32); 8] = [
+                (2, 0),
+                (-2, 0),
+                (0, 2),
+                (0, -2),
+                (1, 1),
+                (-1, -1),
+                (1, -1),
+                (-1, 1),
+            ];
+            for (idx, &(dx, dz)) in droop_dirs.iter().enumerate() {
+                let len_bits = ((variant_idx >> (idx as u32 * 2)) & 0x3) as i32;
+                let droop_len = 2 + len_bits;
+                let top = base_y + 5;
+                for n in 0..droop_len {
+                    placer.place_core(editor, x + dx, top - n, z + dz);
+                }
             }
         }
     }
 
-    fn get_tree(kind: TreeType) -> Self {
+    /// A few-block shrub that keeps real-world proportions at low scale, reusing the
+    /// type's own log/leaf palette so it still reads as forest cover from altitude.
+    #[allow(clippy::too_many_arguments)]
+    fn create_micro(
+        editor: &mut WorldEditor,
+        x: i32,
+        base_y: i32,
+        z: i32,
+        tree: &Tree,
+        scale: f64,
+        height_m: f64,
+        blacklist: &[Block],
+    ) {
+        let height = ((height_m * scale).round() as i32).clamp(1, 8);
+        let trunk = (height - 1).max(0);
+        for dy in 0..trunk {
+            editor.set_block_absolute(tree.log_block, x, base_y + dy, z, None, Some(blacklist));
+        }
+        let top = base_y + trunk;
+        editor.set_block_absolute(tree.leaves_block, x, top, z, None, Some(blacklist));
+        if height >= 3 {
+            for (dx, dz) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+                editor.set_block_absolute(
+                    tree.leaves_block,
+                    x + dx,
+                    top,
+                    z + dz,
+                    None,
+                    Some(blacklist),
+                );
+            }
+        }
+        if height >= 5 {
+            editor.set_block_absolute(tree.leaves_block, x, top + 1, z, None, Some(blacklist));
+        }
+    }
+
+    fn get_tree(kind: TreeType, variant_idx: u32) -> Self {
         match kind {
-            TreeType::Oak => Self {
-                // kind,
-                log_block: OAK_LOG,
-                log_height: 8,
-                leaves_block: OAK_LEAVES,
-                leaves_fill: &OAK_LEAVES_FILL,
-                round_ranges: [
-                    (3..=8).rev().collect(),
-                    (4..=7).rev().collect(),
-                    (5..=6).rev().collect(),
-                ],
+            TreeType::Oak => match variant_idx % 5 {
+                0 => Self::oak_standard(),
+                1 => Self::oak_tall_slim(),
+                2 => Self::oak_bushy(),
+                3 => Self::oak_compact(),
+                _ => Self::oak_lopsided(),
             },
+            TreeType::Spruce => match variant_idx % 3 {
+                0 => Self::spruce_standard(),
+                1 => Self::spruce_towering(),
+                _ => Self::spruce_squat(),
+            },
+            TreeType::Birch => match variant_idx % 3 {
+                0 => Self::birch_standard(),
+                1 => Self::birch_tall(),
+                _ => Self::birch_cluster(),
+            },
+            TreeType::DarkOak => match variant_idx % 3 {
+                0 => Self::dark_oak_standard(),
+                1 => Self::dark_oak_tall_bushy(),
+                _ => Self::dark_oak_stunted(),
+            },
+            TreeType::Jungle => match variant_idx % 2 {
+                0 => Self::jungle_standard(),
+                _ => Self::jungle_broad(),
+            },
+            TreeType::Acacia => match variant_idx % 2 {
+                0 => Self::acacia_standard(),
+                _ => Self::acacia_tall(),
+            },
+            TreeType::Cherry => match variant_idx % 2 {
+                0 => Self::cherry_standard(),
+                _ => Self::cherry_weeping(),
+            },
+            TreeType::TallOak => match variant_idx % 2 {
+                0 => Self::tall_oak_standard(),
+                _ => Self::tall_oak_giant(),
+            },
+            TreeType::Pine => match variant_idx % 2 {
+                0 => Self::pine_standard(),
+                _ => Self::pine_tall(),
+            },
+            TreeType::Bush => Self::bush(),
+            TreeType::AzaleaBush => Self::azalea_bush(),
+            TreeType::Willow => Self::willow(),
+            TreeType::FloweringOak => Self::flowering_oak(),
+            TreeType::Mangrove => Self::mangrove(),
+        }
+    }
 
-            TreeType::Spruce => Self {
-                // kind,
-                log_block: SPRUCE_LOG,
-                log_height: 9,
-                leaves_block: SPRUCE_LEAVES,
-                leaves_fill: &SPRUCE_LEAVES_FILL,
-                // Conical shape: wide at bottom, narrow at top
-                round_ranges: [vec![9, 7, 6, 4, 3], vec![6, 3], vec![]],
-            },
+    fn make(
+        log_block: Block,
+        log_height: i32,
+        leaves_block: Block,
+        leaves_fill: &'static [(Coord, Coord)],
+        round_ranges: [Vec<i32>; 3],
+    ) -> Self {
+        Self {
+            log_block,
+            log_height,
+            leaves_block,
+            leaves_fill,
+            round_ranges,
+            branch_chance: 0.0,
+            accent_block: None,
+            accent_chance: 0,
+            drooping: false,
+        }
+    }
 
-            TreeType::Birch => Self {
-                // kind,
-                log_block: BIRCH_LOG,
-                log_height: 6,
-                leaves_block: BIRCH_LEAVES,
-                leaves_fill: &BIRCH_LEAVES_FILL,
-                round_ranges: [(2..=6).rev().collect(), (2..=4).collect(), vec![]],
-            },
+    fn with_branch(mut self, chance: f32) -> Self {
+        self.branch_chance = chance;
+        self
+    }
 
-            TreeType::DarkOak => Self {
-                // Short trunk with a very wide, bushy canopy
-                log_block: DARK_OAK_LOG,
-                log_height: 5,
-                leaves_block: DARK_OAK_LEAVES,
-                leaves_fill: &DARK_OAK_LEAVES_FILL,
-                // All 3 round patterns used for maximum width
-                round_ranges: [
-                    (3..=6).rev().collect(),
-                    (3..=5).rev().collect(),
-                    (4..=5).rev().collect(),
-                ],
-            },
+    fn with_accent(mut self, block: Block, chance: u8) -> Self {
+        self.accent_block = Some(block);
+        self.accent_chance = chance;
+        self
+    }
 
-            TreeType::Jungle => Self {
-                // Tall trunk, canopy clustered at the top
-                log_block: JUNGLE_LOG,
-                log_height: 10,
-                leaves_block: JUNGLE_LEAVES,
-                leaves_fill: &JUNGLE_LEAVES_FILL,
-                // Canopy only near the top of the tree
-                round_ranges: [(7..=11).rev().collect(), (8..=10).rev().collect(), vec![]],
-            },
+    fn drooping(mut self) -> Self {
+        self.drooping = true;
+        self
+    }
 
-            TreeType::Acacia => Self {
-                // Medium trunk with umbrella-shaped canopy, domed center
-                log_block: ACACIA_LOG,
-                log_height: 6,
-                leaves_block: ACACIA_LEAVES,
-                leaves_fill: &ACACIA_LEAVES_FILL,
-                // Inner rounds reach higher → gentle dome, outer stays low → wide brim
-                round_ranges: [
-                    (5..=8).rev().collect(),
-                    (5..=7).rev().collect(),
-                    (6..=7).rev().collect(),
-                ],
-            },
-        } // match
-    } // fn get_tree
+    fn oak_standard() -> Self {
+        Self::make(
+            OAK_LOG,
+            8,
+            OAK_LEAVES,
+            &OAK_LEAVES_FILL_STANDARD,
+            [
+                (3..=8).rev().collect(),
+                (4..=7).rev().collect(),
+                (5..=6).rev().collect(),
+            ],
+        )
+        .with_branch(0.30)
+    }
+
+    fn oak_tall_slim() -> Self {
+        Self::make(
+            OAK_LOG,
+            10,
+            OAK_LEAVES,
+            &OAK_LEAVES_FILL_TALL_SLIM,
+            [(7..=11).rev().collect(), (8..=10).rev().collect(), vec![]],
+        )
+        .with_branch(0.40)
+    }
+
+    fn oak_bushy() -> Self {
+        Self::make(
+            OAK_LOG,
+            6,
+            OAK_LEAVES,
+            &OAK_LEAVES_FILL_BUSHY,
+            [
+                (3..=7).rev().collect(),
+                (3..=6).rev().collect(),
+                (4..=5).rev().collect(),
+            ],
+        )
+        .with_branch(0.20)
+    }
+
+    fn oak_compact() -> Self {
+        Self::make(
+            OAK_LOG,
+            5,
+            OAK_LEAVES,
+            &OAK_LEAVES_FILL_COMPACT,
+            [(2..=5).rev().collect(), (3..=4).rev().collect(), vec![]],
+        )
+    }
+
+    // Standard oak silhouette with a guaranteed side branch (the branch is the asymmetry).
+    fn oak_lopsided() -> Self {
+        Self::make(
+            OAK_LOG,
+            8,
+            OAK_LEAVES,
+            &OAK_LEAVES_FILL_STANDARD,
+            [
+                (3..=8).rev().collect(),
+                (4..=7).rev().collect(),
+                (5..=6).rev().collect(),
+            ],
+        )
+        .with_branch(1.0)
+    }
+
+    fn spruce_standard() -> Self {
+        Self::make(
+            SPRUCE_LOG,
+            9,
+            SPRUCE_LEAVES,
+            &SPRUCE_LEAVES_FILL_STANDARD,
+            [vec![9, 7, 6, 4, 3], vec![6, 3], vec![]],
+        )
+    }
+
+    fn spruce_towering() -> Self {
+        Self::make(
+            SPRUCE_LOG,
+            12,
+            SPRUCE_LEAVES,
+            &SPRUCE_LEAVES_FILL_TOWERING,
+            [vec![12, 10, 8, 6, 4], vec![9, 6, 4], vec![]],
+        )
+    }
+
+    fn spruce_squat() -> Self {
+        Self::make(
+            SPRUCE_LOG,
+            6,
+            SPRUCE_LEAVES,
+            &SPRUCE_LEAVES_FILL_SQUAT,
+            [vec![6, 4, 3], vec![4, 2], vec![3]],
+        )
+    }
+
+    fn birch_standard() -> Self {
+        Self::make(
+            BIRCH_LOG,
+            6,
+            BIRCH_LEAVES,
+            &BIRCH_LEAVES_FILL_STANDARD,
+            [(2..=6).rev().collect(), (2..=4).collect(), vec![]],
+        )
+        .with_branch(0.20)
+    }
+
+    fn birch_tall() -> Self {
+        Self::make(
+            BIRCH_LOG,
+            9,
+            BIRCH_LEAVES,
+            &BIRCH_LEAVES_FILL_TALL,
+            [(5..=9).rev().collect(), (6..=8).rev().collect(), vec![]],
+        )
+        .with_branch(0.25)
+    }
+
+    fn birch_cluster() -> Self {
+        Self::make(
+            BIRCH_LOG,
+            4,
+            BIRCH_LEAVES,
+            &BIRCH_LEAVES_FILL_CLUSTER,
+            [(2..=4).rev().collect(), vec![3], vec![]],
+        )
+    }
+
+    fn dark_oak_standard() -> Self {
+        Self::make(
+            DARK_OAK_LOG,
+            5,
+            DARK_OAK_LEAVES,
+            &DARK_OAK_LEAVES_FILL_STANDARD,
+            [
+                (3..=6).rev().collect(),
+                (3..=5).rev().collect(),
+                (4..=5).rev().collect(),
+            ],
+        )
+        .with_branch(0.40)
+    }
+
+    fn dark_oak_tall_bushy() -> Self {
+        Self::make(
+            DARK_OAK_LOG,
+            8,
+            DARK_OAK_LEAVES,
+            &DARK_OAK_LEAVES_FILL_TALL_BUSHY,
+            [
+                (4..=9).rev().collect(),
+                (5..=8).rev().collect(),
+                (6..=7).rev().collect(),
+            ],
+        )
+        .with_branch(0.50)
+    }
+
+    fn dark_oak_stunted() -> Self {
+        Self::make(
+            DARK_OAK_LOG,
+            3,
+            DARK_OAK_LEAVES,
+            &DARK_OAK_LEAVES_FILL_STUNTED,
+            [vec![3, 2], vec![2], vec![]],
+        )
+    }
+
+    fn jungle_standard() -> Self {
+        Self::make(
+            JUNGLE_LOG,
+            10,
+            JUNGLE_LEAVES,
+            &JUNGLE_LEAVES_FILL_STANDARD,
+            [(7..=11).rev().collect(), (8..=10).rev().collect(), vec![]],
+        )
+        .with_branch(0.50)
+    }
+
+    fn jungle_broad() -> Self {
+        Self::make(
+            JUNGLE_LOG,
+            11,
+            JUNGLE_LEAVES,
+            &JUNGLE_LEAVES_FILL_BROAD,
+            [
+                (8..=12).rev().collect(),
+                (9..=11).rev().collect(),
+                (10..=10).rev().collect(),
+            ],
+        )
+        .with_branch(0.60)
+    }
+
+    fn acacia_standard() -> Self {
+        Self::make(
+            ACACIA_LOG,
+            6,
+            ACACIA_LEAVES,
+            &ACACIA_LEAVES_FILL_STANDARD,
+            [
+                (5..=8).rev().collect(),
+                (5..=7).rev().collect(),
+                (6..=7).rev().collect(),
+            ],
+        )
+        .with_branch(0.35)
+    }
+
+    fn acacia_tall() -> Self {
+        Self::make(
+            ACACIA_LOG,
+            8,
+            ACACIA_LEAVES,
+            &ACACIA_LEAVES_FILL_TALL,
+            [(7..=10).rev().collect(), (8..=9).rev().collect(), vec![9]],
+        )
+        .with_branch(0.45)
+    }
+
+    fn cherry_standard() -> Self {
+        Self::make(
+            CHERRY_LOG,
+            7,
+            CHERRY_LEAVES,
+            &CHERRY_LEAVES_FILL_STANDARD,
+            [
+                (4..=9).rev().collect(),
+                (5..=8).rev().collect(),
+                (6..=7).rev().collect(),
+            ],
+        )
+        .with_branch(0.30)
+    }
+
+    fn cherry_weeping() -> Self {
+        Self::make(
+            CHERRY_LOG,
+            6,
+            CHERRY_LEAVES,
+            &CHERRY_LEAVES_FILL_WEEPING,
+            [
+                (3..=8).rev().collect(),
+                (4..=7).rev().collect(),
+                (5..=6).rev().collect(),
+            ],
+        )
+        .drooping()
+    }
+
+    fn tall_oak_standard() -> Self {
+        Self::make(
+            OAK_LOG,
+            11,
+            OAK_LEAVES,
+            &TALL_OAK_LEAVES_FILL_STANDARD,
+            [(8..=12).rev().collect(), (9..=11).rev().collect(), vec![10]],
+        )
+        .with_branch(0.40)
+    }
+
+    fn tall_oak_giant() -> Self {
+        Self::make(
+            OAK_LOG,
+            13,
+            OAK_LEAVES,
+            &TALL_OAK_LEAVES_FILL_GIANT,
+            [
+                (9..=14).rev().collect(),
+                (10..=13).rev().collect(),
+                (11..=12).rev().collect(),
+            ],
+        )
+        .with_branch(0.60)
+    }
+
+    fn pine_standard() -> Self {
+        Self::make(
+            SPRUCE_LOG,
+            12,
+            SPRUCE_LEAVES,
+            &PINE_LEAVES_FILL_STANDARD,
+            [vec![11, 9, 7, 5], vec![8, 5], vec![]],
+        )
+    }
+
+    fn pine_tall() -> Self {
+        Self::make(
+            SPRUCE_LOG,
+            15,
+            SPRUCE_LEAVES,
+            &PINE_LEAVES_FILL_TALL,
+            [vec![14, 12, 10, 8, 6], vec![11, 7], vec![]],
+        )
+    }
+
+    // log_height == 0 → no trunk placed.
+    fn bush() -> Self {
+        Self::make(
+            OAK_LOG,
+            0,
+            OAK_LEAVES,
+            &BUSH_LEAVES_FILL,
+            [vec![], vec![], vec![]],
+        )
+    }
+
+    fn azalea_bush() -> Self {
+        Self::make(
+            OAK_LOG,
+            0,
+            AZALEA_LEAVES,
+            &BUSH_LEAVES_FILL,
+            [vec![], vec![], vec![]],
+        )
+    }
+
+    fn willow() -> Self {
+        Self::make(
+            OAK_LOG,
+            5,
+            OAK_LEAVES,
+            &WILLOW_LEAVES_FILL,
+            [(4..=6).rev().collect(), (4..=5).rev().collect(), vec![5]],
+        )
+        .drooping()
+    }
+
+    // Oak silhouette with cherry-pink blossom accents on the outermost ring.
+    fn flowering_oak() -> Self {
+        Self::make(
+            OAK_LOG,
+            8,
+            OAK_LEAVES,
+            &OAK_LEAVES_FILL_STANDARD,
+            [
+                (3..=8).rev().collect(),
+                (4..=7).rev().collect(),
+                (5..=6).rev().collect(),
+            ],
+        )
+        .with_branch(0.40)
+        .with_accent(CHERRY_LEAVES, 18)
+    }
+
+    fn mangrove() -> Self {
+        Self::make(
+            MANGROVE_LOG,
+            8,
+            MANGROVE_LEAVES,
+            &MANGROVE_LEAVES_FILL,
+            [
+                (5..=10).rev().collect(),
+                (6..=9).rev().collect(),
+                (7..=8).rev().collect(),
+            ],
+        )
+        .with_branch(0.55)
+    }
 
     /// Get all possible building wall blocks
     fn get_building_wall_blocks() -> Vec<Block> {
@@ -354,6 +1441,8 @@ impl Tree<'_> {
             BLUE_TERRACOTTA,
             YELLOW_TERRACOTTA,
             BLACK_CONCRETE,
+            GRAY_CONCRETE_POWDER,
+            CYAN_TERRACOTTA,
             WHITE_CONCRETE,
             GRAY_CONCRETE,
             LIGHT_GRAY_CONCRETE,
@@ -465,4 +1554,308 @@ impl Tree<'_> {
             BEDROCK,
         ]
     }
-} // impl Tree
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::coordinate_system::cartesian::XZBBox;
+    use crate::coordinate_system::geographic::LLBBox;
+
+    // The apex cap must place even on a cell the ~4% organic gap skips.
+    #[test]
+    fn place_apex_cap_fills_the_organic_gap() {
+        let xzbbox = XZBBox::rect_from_min_max(0, 0, 63, 63).unwrap();
+        let llbbox = LLBBox::new(54.6, 9.9, 54.61, 9.91).unwrap();
+        // Editor is never saved here; a temp dir keeps the path valid + portable.
+        let mut editor = WorldEditor::new(std::env::temp_dir(), &xzbbox, llbbox);
+
+        let placer = LeafPlacer {
+            leaves_block: OAK_LEAVES,
+            accent_block: None,
+            accent_chance: 0,
+            check_collision: false,
+            footprints: None,
+            origin: (0, 0),
+            roof_tops: [NO_ROOF; CANOPY_CELLS],
+        };
+
+        // Pick a gap cell via the same predicate place_with uses (no drift).
+        let (gx, gz) = (0..64)
+            .flat_map(|x| (0..64).map(move |z| (x, z)))
+            .find(|&(x, z)| leaf_gap_at(leaf_hash(x, 10, z)))
+            .expect("a 4% gap cell exists in 64x64");
+
+        placer.place_core(&mut editor, gx, 10, gz);
+        assert!(
+            !editor.check_for_block_absolute(gx, 10, gz, Some(&[OAK_LEAVES]), None),
+            "the organic gap should skip this cell"
+        );
+        placer.place_apex_cap(&mut editor, gx, 10, gz);
+        assert!(
+            editor.check_for_block_absolute(gx, 10, gz, Some(&[OAK_LEAVES]), None),
+            "apex cap must place despite the organic gap"
+        );
+    }
+
+    // A canopy must drape over a low roof instead of being sliced at the footprint edge.
+    #[test]
+    fn canopy_clears_a_low_roof_but_not_its_interior() {
+        let xzbbox = XZBBox::rect_from_min_max(0, 0, 63, 63).unwrap();
+        let llbbox = LLBBox::new(54.6, 9.9, 54.61, 9.91).unwrap();
+        let mut editor = WorldEditor::new(std::env::temp_dir(), &xzbbox, llbbox);
+
+        // One-block "roof" at y=20 over a footprint cell next to the tree at (30, 30).
+        let (roof_x, roof_z, roof_y) = (31, 30, 20);
+        editor.set_block_absolute(SMOOTH_STONE, roof_x, roof_y, roof_z, None, None);
+
+        let mut footprints = BuildingFootprintBitmap::new(&xzbbox);
+        footprints.set(roof_x, roof_z);
+
+        let roof_tops = LeafPlacer::sample_roof_tops(&editor, 30, 30, 10, 30, Some(&footprints));
+        let placer = LeafPlacer {
+            leaves_block: OAK_LEAVES,
+            accent_block: None,
+            accent_chance: 0,
+            check_collision: true,
+            footprints: Some(&footprints),
+            origin: (30, 30),
+            roof_tops,
+        };
+
+        assert!(
+            placer.blocked(roof_x, roof_y - 5, roof_z),
+            "leaves below the roof are inside the building"
+        );
+        assert!(
+            placer.blocked(roof_x, roof_y, roof_z),
+            "the roof block itself is not a leaf slot"
+        );
+        assert!(
+            !placer.blocked(roof_x, roof_y + 1, roof_z),
+            "leaves above a low roof must survive"
+        );
+        assert!(
+            !placer.blocked(30, roof_y - 5, 30),
+            "columns outside the footprint are never culled"
+        );
+    }
+
+    /// A request from a tile's halo is left to the tile that owns the cell.
+    #[test]
+    fn a_halo_request_is_left_to_the_owning_tile() {
+        let xzbbox = XZBBox::rect_from_min_max(0, 0, 63, 63).unwrap();
+        let llbbox = LLBBox::new(54.6, 9.9, 54.61, 9.91).unwrap();
+        let has_trunk = |editor: &WorldEditor| editor.check_for_block(30, 2, 30, Some(&[OAK_LOG]));
+
+        let mut halo = WorldEditor::new(std::env::temp_dir(), &xzbbox, llbbox);
+        halo.set_strict_bounds(0, 0, 20, 63);
+        Tree::create_of_type(
+            &mut halo,
+            (30, 1, 30),
+            TreeType::Oak,
+            None,
+            None,
+            false,
+            false,
+        );
+        assert!(!has_trunk(&halo));
+
+        let mut owner = WorldEditor::new(std::env::temp_dir(), &xzbbox, llbbox);
+        owner.set_strict_bounds(21, 0, 63, 63);
+        Tree::create_of_type(
+            &mut owner,
+            (30, 1, 30),
+            TreeType::Oak,
+            None,
+            None,
+            false,
+            false,
+        );
+        assert!(has_trunk(&owner));
+    }
+
+    // allow_on_paved lets a mapped tree stand on paving, water always rejected
+    #[test]
+    fn allow_on_paved_lets_dedicated_trees_stand_on_paving_but_never_on_water() {
+        let xzbbox = XZBBox::rect_from_min_max(0, 0, 63, 63).unwrap();
+        let llbbox = LLBBox::new(54.6, 9.9, 54.61, 9.91).unwrap();
+        let has_trunk = |editor: &WorldEditor| editor.check_for_block(30, 2, 30, Some(&[OAK_LOG]));
+
+        // Scattered tree (allow_on_paved = false) on a paved block: rejected.
+        let mut editor = WorldEditor::new(std::env::temp_dir(), &xzbbox, llbbox);
+        editor.set_block(SMOOTH_STONE, 30, 0, 30, None, None);
+        Tree::create_of_type(
+            &mut editor,
+            (30, 1, 30),
+            TreeType::Oak,
+            None,
+            None,
+            false,
+            false,
+        );
+        assert!(
+            !has_trunk(&editor),
+            "a scattered tree must not grow on a paved surface"
+        );
+
+        // Deliberately-mapped tree (allow_on_paved = true) on the same paved block: allowed.
+        let mut editor = WorldEditor::new(std::env::temp_dir(), &xzbbox, llbbox);
+        editor.set_block(SMOOTH_STONE, 30, 0, 30, None, None);
+        Tree::create_of_type(
+            &mut editor,
+            (30, 1, 30),
+            TreeType::Oak,
+            None,
+            None,
+            true,
+            false,
+        );
+        assert!(
+            has_trunk(&editor),
+            "a dedicated natural=tree node must stand on paving"
+        );
+
+        // Water is off-limits even with allow_on_paved = true.
+        let mut editor = WorldEditor::new(std::env::temp_dir(), &xzbbox, llbbox);
+        editor.set_block(WATER, 30, 0, 30, None, None);
+        Tree::create_of_type(
+            &mut editor,
+            (30, 1, 30),
+            TreeType::Oak,
+            None,
+            None,
+            true,
+            false,
+        );
+        assert!(
+            !has_trunk(&editor),
+            "trees must never stand on water, even when paving is allowed"
+        );
+    }
+}
+
+#[cfg(test)]
+mod sealed_surface_tests {
+    use super::*;
+    use crate::coordinate_system::cartesian::XZBBox;
+    use crate::coordinate_system::geographic::LLBBox;
+    use crate::floodfill_cache::SealedSurfaceBitmap;
+    use std::sync::Arc;
+
+    fn column_is_empty(editor: &WorldEditor, x: i32, z: i32) -> bool {
+        !(0..40).any(|y| editor.block_exists_absolute(x, y, z))
+    }
+
+    fn editor_with_sealed_column(xzbbox: &XZBBox) -> WorldEditor<'_> {
+        let llbbox = LLBBox::new(46.0, 7.7, 46.01, 7.71).unwrap();
+        let mut editor = WorldEditor::new(std::env::temp_dir(), xzbbox, llbbox);
+        let mut mask = SealedSurfaceBitmap::new(xzbbox);
+        mask.set(16, 16);
+        editor.set_sealed_surface(Arc::new(mask));
+        editor
+    }
+
+    #[test]
+    fn scattered_trees_stay_off_a_sealed_column() {
+        let xzbbox = XZBBox::rect_from_min_max(0, 0, 31, 31).unwrap();
+        let mut editor = editor_with_sealed_column(&xzbbox);
+
+        Tree::create(&mut editor, (16, 0, 16), None, None);
+        assert!(
+            column_is_empty(&editor, 16, 16),
+            "a court or road column must stay clear"
+        );
+
+        Tree::create(&mut editor, (20, 0, 20), None, None);
+        assert!(
+            !column_is_empty(&editor, 20, 20),
+            "open ground next to it still gets its tree"
+        );
+    }
+
+    #[test]
+    fn a_mapped_tree_node_still_stands_on_a_sealed_column() {
+        let xzbbox = XZBBox::rect_from_min_max(0, 0, 31, 31).unwrap();
+        let mut editor = editor_with_sealed_column(&xzbbox);
+
+        Tree::create_of_type(
+            &mut editor,
+            (16, 0, 16),
+            TreeType::Oak,
+            None,
+            None,
+            true,
+            false,
+        );
+        assert!(
+            !column_is_empty(&editor, 16, 16),
+            "natural=tree is mapped on purpose and keeps its paving exception"
+        );
+    }
+}
+
+#[cfg(test)]
+mod scale_tests {
+    use super::*;
+    use crate::coordinate_system::cartesian::XZBBox;
+    use crate::coordinate_system::geographic::LLBBox;
+
+    /// Tallest block placed in the column at (x, z), or None if the column is empty.
+    fn tree_top(editor: &WorldEditor, x: i32, z: i32) -> Option<i32> {
+        (0..40)
+            .rev()
+            .find(|&y| editor.block_exists_absolute(x, y, z))
+    }
+
+    fn place_at_scale(scale: f64) -> Option<i32> {
+        let xzbbox = XZBBox::rect_from_min_max(0, 0, 31, 31).unwrap();
+        let llbbox = LLBBox::new(46.0, 7.7, 46.01, 7.71).unwrap();
+        let mut editor = WorldEditor::new(std::env::temp_dir(), &xzbbox, llbbox);
+        editor.set_projection_info("local", scale);
+        Tree::create_of_type(
+            &mut editor,
+            (16, 0, 16),
+            TreeType::Oak,
+            None,
+            None,
+            false,
+            false,
+        );
+        tree_top(&editor, 16, 16)
+    }
+
+    #[test]
+    fn trees_shrink_with_the_world_scale() {
+        // At scale 1.0 a full model is placed: a real tree, many blocks tall.
+        let full = place_at_scale(1.0).expect("a tree must be placed at scale 1.0");
+        assert!(
+            full >= 5,
+            "scale 1.0 must place a full-size tree, got {full} blocks"
+        );
+
+        // At scale 0.1 one block is 10 m. A 25 m tree must be ~3 blocks, not ~15
+        // (which would be a 150 m tree towering over the terrain).
+        let micro = place_at_scale(0.1).expect("a tree must still be placed at scale 0.1");
+        assert!(
+            micro <= 4,
+            "scale 0.1 must place a proportional shrub, got {micro} blocks (~{} m)",
+            micro * 10
+        );
+        assert!(
+            micro < full,
+            "a low-scale tree must be shorter than a full one"
+        );
+    }
+
+    #[test]
+    fn micro_tree_height_tracks_scale_monotonically() {
+        let a = place_at_scale(0.1).unwrap();
+        let b = place_at_scale(0.2).unwrap();
+        let c = place_at_scale(0.3).unwrap();
+        assert!(
+            a <= b && b <= c,
+            "height must grow with scale: {a} <= {b} <= {c}"
+        );
+    }
+}

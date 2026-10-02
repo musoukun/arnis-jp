@@ -342,41 +342,6 @@ body,
 
 }
 
-/* World Preview Button in Edit Toolbar */
-.leaflet-draw-toolbar .leaflet-draw-edit-preview {
-  background-position: -31px -2px;
-}
-
-.leaflet-draw-toolbar .leaflet-draw-edit-preview.disabled,
-.leaflet-draw-toolbar .leaflet-draw-edit-preview.editing-mode {
-  opacity: 0.4;
-  cursor: not-allowed;
-  pointer-events: none;
-}
-
-.leaflet-draw-toolbar .leaflet-draw-edit-preview.active {
-  background-color: #a0d0ff;
-}
-
-.world-preview-slider-container {
-  padding: 6px 8px !important;
-  background: white !important;
-  background-clip: padding-box;
-}
-
-.world-preview-slider-container a {
-  display: none !important;
-}
-
-.world-preview-slider {
-  width: 80px;
-  height: 8px;
-  cursor: pointer;
-  accent-color: #3887BE;
-  display: block;
-  margin: 0;
-}
-
 /* Context menu for coordinate copying */
 .coordinate-context-menu {
   position: fixed;
@@ -413,4 +378,91 @@ body,
   height: 1px;
   background: #e0e0e0;
   margin: 4px 0;
+}
+
+/* Hint overlay shown when no bbox is selected */
+.bbox-hint-overlay {
+  /* Arnis's own surface, not Leaflet's. A white pill reads as a control the map
+     library put there, and over the Smooth Dark and Satellite themes it is a
+     bright box on a dark picture. The grey is the panel's #717171 darkened
+     enough to carry light text over a bright map. The radius sits between the
+     app's 8px panels and the 4px of the map's own floating overlays (the
+     rotation toast, the coordinate menu), which the pill sits among. */
+  background: rgba(58, 58, 58, 0.82);
+  -webkit-backdrop-filter: blur(10px) saturate(120%);
+  backdrop-filter: blur(10px) saturate(120%);
+  color: #ececec;
+  padding: 7px 14px;
+  border-radius: 5px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 12.5px;
+  line-height: 1.4;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  pointer-events: none;
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  z-index: 1000;
+  animation: hintFadeIn 0.5s ease;
+}
+
+@keyframes hintFadeIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+/* Toast notification for rotation angle feedback */
+.rotation-toast {
+  background: rgba(254, 204, 68, 0.95);
+  color: #333;
+  padding: 8px 16px;
+  border-radius: 4px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.16);
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  pointer-events: none;
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  z-index: 2000;
+  opacity: 1;
+  transition: opacity 0.6s ease;
+}
+
+.rotation-toast.fade-out {
+  opacity: 0;
+}
+
+/* Always-on bbox drag handles: plain white rectangles with a thin dark outline */
+.bbox-handle {
+  background: #ffffff;
+  border: 1px solid #333333;
+  border-radius: 2px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+  user-select: none;
+}
+
+.bbox-handle-nwse {
+  cursor: nwse-resize;
+}
+
+.bbox-handle-nesw {
+  cursor: nesw-resize;
+}
+
+.bbox-handle-move {
+  cursor: move;
 }

@@ -87,14 +87,19 @@ var citySearch = {
                 if (self.activeRequest !== request) return;
                 self.activeRequest = null;
                 if (textStatus !== 'abort') {
-                    self.showError('Search failed. Please try again.');
+                    // status 0 means the request never reached the host: DNS,
+                    // TLS or a network-level block, not a geocoder error.
+                    arnisLog('warn', 'Geocoding request to ' + url + ' failed (' +
+                        textStatus + ', HTTP status ' + (jqXHR && jqXHR.status) + ').');
+                    self.showError(window.mapText('map_search_failed', 'Search failed. Please try again.'));
                 }
             }
         });
     },
     
     showLoading: function() {
-        $('#search-results').html('<div class="search-loading">Searching...</div>').show();
+        $('#search-results').html('<div class="search-loading"></div>').show();
+        $('#search-results .search-loading').text(window.mapText('map_search_searching', 'Searching...'));
     },
     
     showError: function(message) {
@@ -115,7 +120,8 @@ var citySearch = {
         var $results = $('#search-results');
         
         if (results.length === 0) {
-            $results.html('<div class="search-no-results">No cities found</div>').show();
+            $results.html('<div class="search-no-results"></div>').show();
+            $results.find('.search-no-results').text(window.mapText('map_search_none', 'No cities found'));
             return;
         }
         

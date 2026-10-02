@@ -1,11 +1,31 @@
 // Sutherland-Hodgman polygon clipping and related geometry utilities.
 //
-// Provides bbox clipping for polygons, polylines, and water rings with
-// proper corner insertion for closed shapes.
+// Provides bbox clipping for polygons, polylines, and water rings.
 
 use crate::coordinate_system::cartesian::{XZBBox, XZPoint};
 use crate::osm_parser::ProcessedNode;
 use std::collections::HashMap;
+
+/// Where the ids invented for clipped corners live.
+///
+/// A vertex the clipper creates has no OSM node behind it and still needs an
+/// id, and the facade projection now identifies a wall by the ids of its two
+/// ends. `way_id * 10_000_000 + i` alone lands inside the real node id range
+/// for a low way id (OSM is around 1.3e10 today), so an invented corner could
+/// collide with a real node somewhere else in the world. Everything invented
+/// sits above this instead, which is four orders of magnitude clear of OSM and
+/// still inside the positive half of an i64 for anything that serialises ids.
+const INVENTED_NODE_BASE: u64 = 1 << 62;
+
+/// The id for the `i`th vertex the clipper invented on `way_id`.
+fn invented_node_id(way_id: u64, i: u64) -> u64 {
+    INVENTED_NODE_BASE | (way_id.wrapping_mul(10000000).wrapping_add(i) & (INVENTED_NODE_BASE - 1))
+}
+
+/// Whether `id` was invented by the clipper rather than read from OSM.
+pub fn is_invented_node_id(id: u64) -> bool {
+    id >= INVENTED_NODE_BASE
+}
 
 /// Clips a way to the bounding box using Sutherland-Hodgman for polygons or
 /// simple line clipping for polylines. Preserves endpoint IDs for ring assembly.
@@ -56,12 +76,14 @@ pub fn clip_way_to_bbox(nodes: &[ProcessedNode], xzbbox: &XZBBox) -> Vec<Process
         return Vec::new();
     }
 
-    let polygon = insert_bbox_corners(polygon, min_x, min_z, max_x, max_z);
-
-    let polygon = remove_consecutive_duplicates(polygon);
-
-    if polygon.len() < 3 {
-        return Vec::new();
+    // Re-close the polygon: SH output is implicitly closed, and dedup may
+    // have removed the explicit closing point. Re-adding it preserves the
+    // closure signal so downstream code (flood fill) can distinguish closed
+    // polygons from open polylines -- open polylines must never be flood-filled
+    // because geo::Polygon auto-closure would create a diagonal artifact edge.
+    let mut polygon = polygon;
+    if polygon.len() >= 3 {
+        polygon.push(polygon[0]);
     }
 
     assign_node_ids_preserving_endpoints(nodes, polygon, way_id)
@@ -95,6 +117,16 @@ pub fn clip_water_ring_to_bbox(
         return None;
     }
 
+    // Refuse open fragments; chord-closing them here would fabricate a closed
+    // wedge whose synthetic ids defeat the callers' post-clip closure checks.
+    let first = &ring[0];
+    let last = ring.last().unwrap();
+    let closed =
+        first.id == last.id || ((first.x - last.x).abs() <= 1 && (first.z - last.z).abs() <= 1);
+    if !closed {
+        return None;
+    }
+
     // Convert to f64 coordinates and ensure closed
     let mut polygon: Vec<(f64, f64)> = ring.iter().map(|n| (n.x as f64, n.z as f64)).collect();
     if !polygon.is_empty() && polygon.first() != polygon.last() {
@@ -115,11 +147,6 @@ pub fn clip_water_ring_to_bbox(
 
     if !all_points_inside {
         eprintln!("ERROR: clip_water_ring_to_bbox produced points outside bbox!");
-        return None;
-    }
-
-    let polygon = insert_bbox_corners(polygon, min_x, min_z, max_x, max_z);
-    if polygon.len() < 3 {
         return None;
     }
 
@@ -206,10 +233,7 @@ fn clip_polyline_to_bbox(nodes: &[ProcessedNode], xzbbox: &XZBBox) -> Vec<Proces
                     find_bbox_intersections(current_point, next_point, min_x, min_z, max_x, max_z);
 
                 for intersection in intersections {
-                    let synthetic_id = nodes[0]
-                        .id
-                        .wrapping_mul(10000000)
-                        .wrapping_add(result.len() as u64);
+                    let synthetic_id = invented_node_id(nodes[0].id, result.len() as u64);
                     result.push(ProcessedNode {
                         id: synthetic_id,
                         x: intersection.0.round() as i32,
@@ -235,10 +259,7 @@ fn clip_polyline_to_bbox(nodes: &[ProcessedNode], xzbbox: &XZBBox) -> Vec<Proces
                     });
 
                     for intersection in intersections {
-                        let synthetic_id = nodes[0]
-                            .id
-                            .wrapping_mul(10000000)
-                            .wrapping_add(result.len() as u64);
+                        let synthetic_id = invented_node_id(nodes[0].id, result.len() as u64);
                         result.push(ProcessedNode {
                             id: synthetic_id,
                             x: intersection.0.round() as i32,
@@ -374,10 +395,16 @@ fn clip_polygon_sutherland_hodgman_simple(
         }
 
         let mut clipped = Vec::new();
+        let is_closed = !polygon.is_empty() && polygon.first() == polygon.last();
+        let edge_count = if is_closed {
+            polygon.len().saturating_sub(1)
+        } else {
+            polygon.len()
+        };
 
-        for i in 0..(polygon.len().saturating_sub(1)) {
+        for i in 0..edge_count {
             let current = polygon[i];
-            let next = polygon[i + 1];
+            let next = polygon.get(i + 1).copied().unwrap_or(polygon[0]);
 
             let current_inside = point_inside_edge(current, edge_x1, edge_z1, edge_x2, edge_z2);
             let next_inside = point_inside_edge(next, edge_x1, edge_z1, edge_x2, edge_z2);
@@ -498,140 +525,6 @@ fn find_bbox_intersections(
     intersections
 }
 
-/// Returns which bbox edge a point lies on: 0=bottom, 1=right, 2=top, 3=left, -1=interior.
-fn get_bbox_edge(point: (f64, f64), min_x: f64, min_z: f64, max_x: f64, max_z: f64) -> i32 {
-    // Use a slightly larger epsilon to handle floating-point errors from Sutherland-Hodgman.
-    // Points should be clamped to bbox before this function is called, so any point
-    // at or very near the boundary should be considered ON that edge.
-    let eps = 1.0;
-
-    let on_left = (point.0 - min_x).abs() <= eps;
-    let on_right = (point.0 - max_x).abs() <= eps;
-    let on_bottom = (point.1 - min_z).abs() <= eps;
-    let on_top = (point.1 - max_z).abs() <= eps;
-
-    // Handle corners (assign to edge in counter-clockwise order)
-    if on_bottom && on_left {
-        return 3;
-    }
-    if on_bottom && on_right {
-        return 0;
-    }
-    if on_top && on_right {
-        return 1;
-    }
-    if on_top && on_left {
-        return 2;
-    }
-
-    if on_bottom {
-        return 0;
-    }
-    if on_right {
-        return 1;
-    }
-    if on_top {
-        return 2;
-    }
-    if on_left {
-        return 3;
-    }
-
-    -1
-}
-
-/// Returns corners to insert when traversing from edge1 to edge2 via shorter path.
-fn get_corners_between_edges(
-    edge1: i32,
-    edge2: i32,
-    min_x: f64,
-    min_z: f64,
-    max_x: f64,
-    max_z: f64,
-) -> Vec<(f64, f64)> {
-    if edge1 == edge2 || edge1 < 0 || edge2 < 0 {
-        return Vec::new();
-    }
-
-    let corners = [
-        (max_x, min_z), // 0: bottom-right
-        (max_x, max_z), // 1: top-right
-        (min_x, max_z), // 2: top-left
-        (min_x, min_z), // 3: bottom-left
-    ];
-
-    let ccw_dist = ((edge2 - edge1 + 4) % 4) as usize;
-    let cw_dist = ((edge1 - edge2 + 4) % 4) as usize;
-
-    // For opposite edges (distance = 2), we need to pick a direction.
-    // Use counter-clockwise by default to ensure corners are inserted.
-    // This prevents diagonal lines when polygon spans opposite bbox edges.
-
-    let mut result = Vec::new();
-
-    if ccw_dist <= cw_dist {
-        // Go counter-clockwise
-        let mut current = edge1;
-        for _ in 0..ccw_dist {
-            result.push(corners[current as usize]);
-            current = (current + 1) % 4;
-        }
-    } else {
-        // Go clockwise
-        let mut current = edge1;
-        for _ in 0..cw_dist {
-            current = (current + 4 - 1) % 4;
-            result.push(corners[current as usize]);
-        }
-    }
-
-    result
-}
-
-/// Checks if two points are approximately equal (within epsilon tolerance).
-fn points_approx_equal(p1: (f64, f64), p2: (f64, f64)) -> bool {
-    let eps = 1.0;
-    (p1.0 - p2.0).abs() <= eps && (p1.1 - p2.1).abs() <= eps
-}
-
-/// Inserts bbox corners where polygon transitions between different bbox edges.
-fn insert_bbox_corners(
-    polygon: Vec<(f64, f64)>,
-    min_x: f64,
-    min_z: f64,
-    max_x: f64,
-    max_z: f64,
-) -> Vec<(f64, f64)> {
-    if polygon.len() < 3 {
-        return polygon;
-    }
-
-    let mut result = Vec::with_capacity(polygon.len() + 4);
-
-    for i in 0..polygon.len() {
-        let current = polygon[i];
-        let next = polygon[(i + 1) % polygon.len()];
-
-        result.push(current);
-
-        let edge1 = get_bbox_edge(current, min_x, min_z, max_x, max_z);
-        let edge2 = get_bbox_edge(next, min_x, min_z, max_x, max_z);
-
-        if edge1 >= 0 && edge2 >= 0 && edge1 != edge2 {
-            let corners = get_corners_between_edges(edge1, edge2, min_x, min_z, max_x, max_z);
-
-            // Filter out corners that match the current point or the next point
-            for corner in corners {
-                if !points_approx_equal(corner, current) && !points_approx_equal(corner, next) {
-                    result.push(corner);
-                }
-            }
-        }
-    }
-
-    result
-}
-
 /// Removes consecutive duplicate points (within epsilon tolerance).
 fn remove_consecutive_duplicates(polygon: Vec<(f64, f64)>) -> Vec<(f64, f64)> {
     if polygon.is_empty() {
@@ -669,7 +562,27 @@ fn matches_endpoint(coord: (f64, f64), endpoint: &ProcessedNode, tolerance: f64)
     dx * dx + dz * dz < tolerance * tolerance
 }
 
-/// Assigns node IDs to clipped coordinates, preserving original endpoint IDs.
+/// Assigns node IDs to clipped coordinates, keeping the ID of every original
+/// node that survived the clip and inventing one only for the vertices
+/// Sutherland-Hodgman actually created.
+///
+/// A vertex the clipper kept is the same OSM node it was, at the same block, so
+/// it keeps its ID: anything downstream that identifies an edge by its two node
+/// IDs (the facade projection does, and it is the only consumer that can tell)
+/// still finds the edges of a ring that only lost a corner. Inventing an ID for
+/// every vertex, as this used to, renamed a whole ring the moment one node fell
+/// outside the world.
+///
+/// It replaces a 50-block proximity rule that named the first and last clipped
+/// vertex after the way's own first and last node. With the exact match, a
+/// vertex that really is that node has already been named by it, so all the
+/// proximity rule could still reach was a corner the clipper invented, which is
+/// not that node and must not answer to its id: on the Munich test box it put
+/// one way's first node id on two corners 23 blocks away, leaving that id on
+/// three vertices at two different blocks. What the old rule bought is kept
+/// explicitly instead: the caller re-closes the ring by repeating its first
+/// vertex, so the repeat carries the first vertex's id and the `first == last`
+/// closure signal survives.
 fn assign_node_ids_preserving_endpoints(
     original_nodes: &[ProcessedNode],
     clipped_coords: Vec<(f64, f64)>,
@@ -679,47 +592,146 @@ fn assign_node_ids_preserving_endpoints(
         return Vec::new();
     }
 
-    let original_first = original_nodes.first();
-    let original_last = original_nodes.last();
-    let tolerance = 50.0;
-    let last_index = clipped_coords.len() - 1;
+    // First ID wins where two original nodes share a block, so the answer does
+    // not depend on iteration order.
+    let mut by_block: HashMap<(i32, i32), u64> = HashMap::with_capacity(original_nodes.len());
+    for n in original_nodes {
+        by_block.entry((n.x, n.z)).or_insert(n.id);
+    }
 
-    clipped_coords
+    let mut out: Vec<ProcessedNode> = clipped_coords
         .into_iter()
         .enumerate()
         .map(|(i, coord)| {
-            let is_first = i == 0;
-            let is_last = i == last_index;
-
-            if is_first || is_last {
-                if let Some(first) = original_first {
-                    if matches_endpoint(coord, first, tolerance) {
-                        return ProcessedNode {
-                            id: first.id,
-                            x: coord.0.round() as i32,
-                            z: coord.1.round() as i32,
-                            tags: HashMap::new(),
-                        };
-                    }
-                }
-                if let Some(last) = original_last {
-                    if matches_endpoint(coord, last, tolerance) {
-                        return ProcessedNode {
-                            id: last.id,
-                            x: coord.0.round() as i32,
-                            z: coord.1.round() as i32,
-                            tags: HashMap::new(),
-                        };
-                    }
-                }
-            }
-
+            let (x, z) = (coord.0.round() as i32, coord.1.round() as i32);
+            let id = match by_block.get(&(x, z)) {
+                Some(&id) => id,
+                None => invented_node_id(way_id, i as u64),
+            };
             ProcessedNode {
-                id: way_id.wrapping_mul(10000000).wrapping_add(i as u64),
-                x: coord.0.round() as i32,
-                z: coord.1.round() as i32,
+                id,
+                x,
+                z,
                 tags: HashMap::new(),
             }
         })
-        .collect()
+        .collect();
+
+    if out.len() >= 2 {
+        let first = &out[0];
+        let (fx, fz, fid) = (first.x, first.z, first.id);
+        let last = out.last_mut().expect("out has at least two nodes");
+        if last.x == fx && last.z == fz {
+            last.id = fid;
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::coordinate_system::cartesian::XZBBox;
+
+    fn node(id: u64, x: i32, z: i32) -> ProcessedNode {
+        ProcessedNode {
+            id,
+            tags: HashMap::new(),
+            x,
+            z,
+        }
+    }
+
+    /// A clipped ring is still made of the same OSM nodes where it survived,
+    /// and only the corners the clipper cut are new. Renaming the whole ring,
+    /// as this used to, cost every building the world's edge touched all of
+    /// its facades, the walls nowhere near the edge included.
+    #[test]
+    fn a_clipped_ring_keeps_the_ids_of_the_nodes_that_survived() {
+        let bbox = XZBBox::rect_from_min_max(0, 0, 30, 30).unwrap();
+        let ring = vec![
+            node(1, 10, 10),
+            node(2, 40, 10),
+            node(3, 40, 25),
+            node(4, 10, 25),
+            node(1, 10, 10),
+        ];
+        let clipped = clip_way_to_bbox(&ring, &bbox);
+
+        let at = |x: i32, z: i32| clipped.iter().find(|n| n.x == x && n.z == z).map(|n| n.id);
+        assert_eq!(at(10, 10), Some(1), "a node inside the world is itself");
+        assert_eq!(at(10, 25), Some(4));
+        // The two corners the clip created stand where nodes 2 and 3 were cut
+        // off, on the world's edge, and are nobody: an id no OSM node has.
+        for (x, z) in [(30, 10), (30, 25)] {
+            let id = at(x, z).expect("the clip put a corner here");
+            assert!(
+                ![1, 2, 3, 4].contains(&id),
+                "the corner at ({x}, {z}) took the id {id} of a node it is not"
+            );
+        }
+        assert!(!clipped.iter().any(|n| n.id == 2 || n.id == 3));
+        // Still closed by id, which is the signal the ring assembly reads.
+        assert_eq!(clipped.first().map(|n| n.id), clipped.last().map(|n| n.id));
+    }
+
+    #[test]
+    fn open_fragment_crossing_bbox_is_rejected() {
+        let bbox = XZBBox::rect_from_min_max(0, 0, 15, 15).unwrap();
+        let fragment = vec![node(1, -5, 3), node(2, 8, 3), node(3, 30, 12)];
+        assert!(clip_water_ring_to_bbox(&fragment, &bbox).is_none());
+    }
+
+    #[test]
+    fn nearly_closed_ring_crossing_bbox_is_clipped() {
+        let bbox = XZBBox::rect_from_min_max(0, 0, 15, 15).unwrap();
+        let ring = vec![
+            node(1, 4, 4),
+            node(2, 30, 4),
+            node(3, 30, 11),
+            node(4, 4, 11),
+            node(5, 4, 5),
+        ];
+        let clipped = clip_water_ring_to_bbox(&ring, &bbox).unwrap();
+        assert!(clipped
+            .iter()
+            .all(|n| (0..=15).contains(&n.x) && (0..=15).contains(&n.z)));
+    }
+
+    #[test]
+    fn closed_ring_crossing_bbox_is_clipped() {
+        let bbox = XZBBox::rect_from_min_max(0, 0, 15, 15).unwrap();
+        let ring = vec![
+            node(1, 4, 4),
+            node(2, 30, 4),
+            node(3, 30, 11),
+            node(4, 4, 11),
+            node(1, 4, 4),
+        ];
+        assert!(clip_water_ring_to_bbox(&ring, &bbox).is_some());
+    }
+
+    /// An id the clipper invents must never be one OSM could hand out. The old
+    /// scheme, `way_id * 10_000_000 + i`, put way 100's first corner at
+    /// 1_000_000_000, which is an ordinary node id.
+    #[test]
+    fn an_invented_node_id_cannot_collide_with_a_real_one() {
+        // Comfortably above OSM's highest node id today, about 1.3e10.
+        const HIGHEST_PLAUSIBLE_OSM_ID: u64 = 1_000_000_000_000;
+        for way_id in [1u64, 100, 12_345, 987_654_321, 1_234_567_890_123] {
+            for i in 0..64u64 {
+                let id = invented_node_id(way_id, i);
+                assert!(
+                    id > HIGHEST_PLAUSIBLE_OSM_ID,
+                    "way {way_id} corner {i} invented {id}, inside the OSM range"
+                );
+                assert!(is_invented_node_id(id));
+                assert!(id < u64::MAX / 2, "must stay positive as an i64");
+            }
+        }
+        assert!(!is_invented_node_id(1_000_000_000));
+        // Deterministic, and distinct per corner of a way.
+        assert_eq!(invented_node_id(42, 7), invented_node_id(42, 7));
+        assert_ne!(invented_node_id(42, 7), invented_node_id(42, 8));
+    }
 }

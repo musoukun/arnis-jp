@@ -1,374 +1,286 @@
-// Top-down world map renderer for GUI preview.
-//
-// Generates a 1:1 pixel-per-block PNG image of the generated world,
-// showing the topmost visible block at each position.
+// Top-down map preview rendered from the in-memory world during save.
 
-use fastanvil::Region;
-use fastnbt::{from_bytes, Value};
+use crate::block_definitions::Block;
+use crate::coordinate_system::cartesian::XZBBox;
+use crate::world_editor::{BlockStorage, RegionToModify, SectionToModify};
 use fnv::FnvHashMap;
+use image::codecs::png::{CompressionType, FilterType, PngEncoder};
 use image::{Rgb, RgbImage};
 use once_cell::sync::Lazy;
-use rayon::prelude::*;
-use std::fs::File;
-use std::path::Path;
+use std::cmp::Reverse;
+use std::io::BufWriter;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-/// Pre-computed block colors for fast lookup
-static BLOCK_COLORS: Lazy<FnvHashMap<&'static str, Rgb<u8>>> = Lazy::new(get_block_colors);
+/// Longest allowed output image side; larger worlds are box-averaged down.
+const MAX_OUTPUT_SIDE: u32 = 4096;
+const COLOR_LUT_LIMIT: u16 = 512;
+/// Narrowest elevation band the shading spreads over. A bbox with no relief would otherwise
+/// split into two tones at the terrain base, with every roof pinned to the bright end.
+const MIN_SHADING_BAND: i32 = 128;
 
-/// Renders a top-down view of the generated Minecraft world.
-/// Returns the path to the saved image file.
-pub fn render_world_map(
-    world_dir: &Path,
+/// Shared name->color table for the LUT builder and the out-of-range fallback.
+static BLOCK_COLORS: Lazy<FnvHashMap<&'static str, Rgb<u8>>> = Lazy::new(get_block_colors);
+/// Per-block-id color; None = transparent (top-block search looks below).
+static COLOR_LUT: Lazy<Vec<Option<Rgb<u8>>>> = Lazy::new(build_color_lut);
+
+fn build_color_lut() -> Vec<Option<Rgb<u8>>> {
+    (0..COLOR_LUT_LIMIT)
+        .map(|id| {
+            let block = Block::from_raw_id(id);
+            let name = block.try_name()?;
+            if is_transparent_block(name) {
+                return None;
+            }
+            Some(
+                BLOCK_COLORS
+                    .get(name)
+                    .copied()
+                    .unwrap_or_else(|| get_fallback_color(name)),
+            )
+        })
+        .collect()
+}
+
+#[inline]
+fn lut_color(block: Block) -> Option<Rgb<u8>> {
+    if let Some(color) = COLOR_LUT.get(block.id() as usize) {
+        return *color;
+    }
+
+    let name = block.try_name()?;
+    if is_transparent_block(name) {
+        return None;
+    }
+    Some(
+        BLOCK_COLORS
+            .get(name)
+            .copied()
+            .unwrap_or_else(|| get_fallback_color(name)),
+    )
+}
+
+/// Collects top-block colors per region during save, averaged into the preview PNG.
+pub struct PreviewAccumulator {
     min_x: i32,
     max_x: i32,
     min_z: i32,
     max_z: i32,
-) -> Result<std::path::PathBuf, String> {
-    let width = (max_x - min_x + 1) as u32;
-    let height = (max_z - min_z + 1) as u32;
+    /// Blocks per output pixel along each axis.
+    step: u32,
+    /// Column sampling interval per box; caps samples at 256 so u16 sums can't overflow.
+    stride: u32,
+    out_w: u32,
+    out_h: u32,
+    /// Elevation band the shading normalises over: terrain base, half the terrain's own span.
+    shade_base: i32,
+    shade_half_band: f32,
+    /// Per output pixel: [r_sum, g_sum, b_sum, sample_count].
+    frame: Mutex<Vec<[u16; 4]>>,
+}
 
-    if width == 0 || height == 0 {
-        return Err("Invalid world bounds".to_string());
+impl PreviewAccumulator {
+    pub fn new(xzbbox: &XZBBox) -> Self {
+        Self::new_capped(xzbbox, MAX_OUTPUT_SIDE)
     }
 
-    // Use Mutex for thread-safe image access
-    let img = Mutex::new(RgbImage::from_pixel(width, height, Rgb([255, 255, 255])));
+    // Smaller caps keep the frame cheap when only a low-res consumer (map item) needs it.
+    pub fn new_capped(xzbbox: &XZBBox, max_side: u32) -> Self {
+        let width = (xzbbox.max_x() - xzbbox.min_x() + 1) as u32;
+        let height = (xzbbox.max_z() - xzbbox.min_z() + 1) as u32;
+        let step = width.max(height).div_ceil(max_side.max(1)).max(1);
+        let out_w = width.div_ceil(step);
+        let out_h = height.div_ceil(step);
+        // Read once: the scaler has settled long before the first region is written, and the
+        // band has to be the same for every sample that lands in the frame.
+        let shade_base = crate::world_editor::base_chunk_y();
+        let shade_band = crate::world_editor::common::terrain_top_y()
+            .saturating_sub(shade_base)
+            .max(MIN_SHADING_BAND);
+        Self {
+            min_x: xzbbox.min_x(),
+            max_x: xzbbox.max_x(),
+            min_z: xzbbox.min_z(),
+            max_z: xzbbox.max_z(),
+            step,
+            stride: step.div_ceil(16),
+            out_w,
+            out_h,
+            shade_base,
+            shade_half_band: shade_band as f32 / 2.0,
+            frame: Mutex::new(vec![[0u16; 4]; out_w as usize * out_h as usize]),
+        }
+    }
 
-    // Calculate region range
-    let min_region_x = min_x >> 9; // divide by 512 (32 chunks * 16 blocks)
-    let max_region_x = max_x >> 9;
-    let min_region_z = min_z >> 9;
-    let max_region_z = max_z >> 9;
-
-    let region_dir = world_dir.join("region");
-
-    // Collect all region coordinates for parallel processing
-    let region_coords: Vec<(i32, i32)> = (min_region_x..=max_region_x)
-        .flat_map(|rx| (min_region_z..=max_region_z).map(move |rz| (rx, rz)))
-        .collect();
-
-    // Process regions in parallel
-    region_coords.par_iter().for_each(|&(region_x, region_z)| {
-        let region_path = region_dir.join(format!("r.{}.{}.mca", region_x, region_z));
-
-        if !region_path.exists() {
+    /// Accumulates one region's top-block colors; halo columns outside the bounds are clipped.
+    pub(crate) fn ingest_region(&self, region_x: i32, region_z: i32, region: &RegionToModify) {
+        let base_x = region_x * 512;
+        let base_z = region_z * 512;
+        let x0 = base_x.max(self.min_x);
+        let z0 = base_z.max(self.min_z);
+        let x1 = (base_x + 511).min(self.max_x);
+        let z1 = (base_z + 511).min(self.max_z);
+        if x0 > x1 || z0 > z1 {
             return;
         }
+        // Local partial for this region's pixel window, merged under one short lock at the end.
+        let px0 = (x0 - self.min_x) as u32 / self.step;
+        let pz0 = (z0 - self.min_z) as u32 / self.step;
+        let pw = ((x1 - self.min_x) as u32 / self.step - px0 + 1) as usize;
+        let ph = ((z1 - self.min_z) as u32 / self.step - pz0 + 1) as usize;
+        let mut local = vec![[0u16; 4]; pw * ph];
 
-        if let Ok(file) = File::open(&region_path) {
-            if let Ok(mut region) = Region::from_stream(file) {
-                // Collect all pixels from this region first
-                let pixels = render_region_to_pixels(
-                    &mut region,
-                    region_x,
-                    region_z,
-                    min_x,
-                    min_z,
-                    max_x,
-                    max_z,
-                );
-
-                // Then batch-write to image under lock
-                if !pixels.is_empty() {
-                    let mut img_guard = img.lock().unwrap();
-                    for (x, z, color) in pixels {
-                        if x < img_guard.width() && z < img_guard.height() {
-                            img_guard.put_pixel(x, z, color);
-                        }
+        for (&(chunk_x, chunk_z), chunk) in &region.chunks {
+            let cbx = base_x + chunk_x * 16;
+            let cbz = base_z + chunk_z * 16;
+            if cbx + 15 < x0 || cbx > x1 || cbz + 15 < z0 || cbz > z1 {
+                continue;
+            }
+            let mut sections: Vec<(i8, &SectionToModify)> =
+                chunk.sections.iter().map(|(y, s)| (*y, s)).collect();
+            if sections.is_empty() {
+                continue;
+            }
+            sections.sort_unstable_by_key(|(y, _)| Reverse(*y));
+            for lz in 0..16 {
+                let wz = cbz + lz;
+                if wz < z0
+                    || wz > z1
+                    || !((wz - self.min_z) as u32 % self.step).is_multiple_of(self.stride)
+                {
+                    continue;
+                }
+                for lx in 0..16 {
+                    let wx = cbx + lx;
+                    if wx < x0
+                        || wx > x1
+                        || !((wx - self.min_x) as u32 % self.step).is_multiple_of(self.stride)
+                    {
+                        continue;
+                    }
+                    if let Some((color, y)) = top_block_color(&sections, lx as u8, lz as u8) {
+                        let c = apply_elevation_shading(
+                            color,
+                            y,
+                            self.shade_base,
+                            self.shade_half_band,
+                        );
+                        let px = (wx - self.min_x) as u32 / self.step;
+                        let pz = (wz - self.min_z) as u32 / self.step;
+                        let cell = &mut local[(pz - pz0) as usize * pw + (px - px0) as usize];
+                        cell[0] += u16::from(c.0[0]);
+                        cell[1] += u16::from(c.0[1]);
+                        cell[2] += u16::from(c.0[2]);
+                        cell[3] += 1;
                     }
                 }
             }
         }
-    });
 
-    // Save the image
-    let output_path = world_dir.join("arnis_world_map.png");
-    img.into_inner()
-        .unwrap()
-        .save(&output_path)
-        .map_err(|e| format!("Failed to save map image: {}", e))?;
-
-    Ok(output_path)
-}
-
-/// Renders all chunks within a region and returns pixel data
-fn render_region_to_pixels(
-    region: &mut Region<File>,
-    region_x: i32,
-    region_z: i32,
-    min_x: i32,
-    min_z: i32,
-    max_x: i32,
-    max_z: i32,
-) -> Vec<(u32, u32, Rgb<u8>)> {
-    let mut pixels = Vec::new();
-    let region_base_x = region_x * 512;
-    let region_base_z = region_z * 512;
-
-    for chunk_local_x in 0..32 {
-        for chunk_local_z in 0..32 {
-            let chunk_base_x = region_base_x + chunk_local_x * 16;
-            let chunk_base_z = region_base_z + chunk_local_z * 16;
-
-            // Skip chunks outside our bounds
-            if chunk_base_x + 15 < min_x
-                || chunk_base_x > max_x
-                || chunk_base_z + 15 < min_z
-                || chunk_base_z > max_z
-            {
-                continue;
-            }
-
-            if let Ok(Some(chunk_data)) =
-                region.read_chunk(chunk_local_x as usize, chunk_local_z as usize)
-            {
-                render_chunk_to_pixels(
-                    &chunk_data,
-                    &mut pixels,
-                    chunk_base_x,
-                    chunk_base_z,
-                    min_x,
-                    min_z,
-                    max_x,
-                    max_z,
-                );
+        let mut frame = self.frame.lock().unwrap();
+        for row in 0..ph {
+            let out_base = (pz0 as usize + row) * self.out_w as usize + px0 as usize;
+            for (col, src) in local[row * pw..(row + 1) * pw].iter().enumerate() {
+                if src[3] == 0 {
+                    continue;
+                }
+                let dst = &mut frame[out_base + col];
+                dst[0] += src[0];
+                dst[1] += src[1];
+                dst[2] += src[2];
+                dst[3] += src[3];
             }
         }
     }
 
-    pixels
-}
-
-/// Renders a single chunk and appends pixel data
-#[allow(clippy::too_many_arguments)]
-fn render_chunk_to_pixels(
-    chunk_data: &[u8],
-    pixels: &mut Vec<(u32, u32, Rgb<u8>)>,
-    chunk_base_x: i32,
-    chunk_base_z: i32,
-    min_x: i32,
-    min_z: i32,
-    max_x: i32,
-    max_z: i32,
-) {
-    // Parse chunk NBT - look for Level.sections or sections depending on format
-    let chunk: Value = match from_bytes(chunk_data) {
-        Ok(v) => v,
-        Err(_) => return,
-    };
-
-    // Try to get sections from the chunk data
-    let sections = get_sections_from_chunk(&chunk);
-    if sections.is_empty() {
-        return;
+    pub fn min_x(&self) -> i32 {
+        self.min_x
     }
 
-    // Pre-sort sections by Y (descending) once per chunk, not per column
-    let sorted_sections = get_sorted_sections(&sections);
-    if sorted_sections.is_empty() {
-        return;
+    pub fn min_z(&self) -> i32 {
+        self.min_z
     }
 
-    // For each column in the chunk
-    for local_x in 0..16 {
-        for local_z in 0..16 {
-            let world_x = chunk_base_x + local_x;
-            let world_z = chunk_base_z + local_z;
+    /// Blocks per preview pixel.
+    pub fn step(&self) -> u32 {
+        self.step
+    }
 
-            // Skip if outside our bounds
-            if world_x < min_x || world_x > max_x || world_z < min_z || world_z > max_z {
+    /// Averages the samples into an image without consuming the frame.
+    pub fn render_image(&self) -> RgbImage {
+        let frame = self.frame.lock().unwrap();
+        let mut img = RgbImage::from_pixel(self.out_w, self.out_h, Rgb([255, 255, 255]));
+        for (i, cell) in frame.iter().enumerate() {
+            let n = cell[3];
+            if n == 0 {
                 continue;
             }
+            let px = Rgb([
+                (cell[0] / n) as u8,
+                (cell[1] / n) as u8,
+                (cell[2] / n) as u8,
+            ]);
+            img.put_pixel(i as u32 % self.out_w, i as u32 / self.out_w, px);
+        }
+        img
+    }
 
-            // Find topmost non-air block using pre-sorted sections
-            if let Some((block_name, world_y)) =
-                find_top_block_sorted(&sorted_sections, local_x as usize, local_z as usize)
-            {
-                // Strip minecraft: prefix for lookup
-                let short_name = block_name.strip_prefix("minecraft:").unwrap_or(&block_name);
+    /// Averages the samples and writes the PNG; unsampled pixels stay white.
+    pub fn finalize(&self, output_path: &Path) -> Result<PathBuf, String> {
+        let img = self.render_image();
+        // Free the accumulator; the preview is only written once.
+        drop(std::mem::take(&mut *self.frame.lock().unwrap()));
 
-                let base_color = BLOCK_COLORS
-                    .get(short_name)
-                    .copied()
-                    .unwrap_or_else(|| get_fallback_color(&block_name));
+        let file = std::fs::File::create(output_path)
+            .map_err(|e| format!("Failed to create map image: {e}"))?;
+        let encoder = PngEncoder::new_with_quality(
+            BufWriter::new(file),
+            CompressionType::Default,
+            FilterType::Adaptive,
+        );
+        img.write_with_encoder(encoder)
+            .map_err(|e| format!("Failed to save map image: {e}"))?;
+        Ok(output_path.to_path_buf())
+    }
+}
 
-                // Apply elevation shading
-                let color = apply_elevation_shading(base_color, world_y);
-
-                let img_x = (world_x - min_x) as u32;
-                let img_z = (world_z - min_z) as u32;
-
-                pixels.push((img_x, img_z, color));
+/// Topmost non-transparent block color and world Y, sections pre-sorted by Y descending.
+fn top_block_color(sections: &[(i8, &SectionToModify)], x: u8, z: u8) -> Option<(Rgb<u8>, i32)> {
+    for (section_y, section) in sections {
+        match &section.storage {
+            BlockStorage::Uniform(b) => {
+                if let Some(c) = lut_color(*b) {
+                    return Some((c, i32::from(*section_y) * 16 + 15));
+                }
+            }
+            _ => {
+                for y in (0..16u8).rev() {
+                    let b = section.storage.get(SectionToModify::index(x, y, z));
+                    if let Some(c) = lut_color(b) {
+                        return Some((c, i32::from(*section_y) * 16 + i32::from(y)));
+                    }
+                }
             }
         }
     }
+    None
 }
 
-/// Applies elevation-based shading to a color
-/// Higher elevations are brighter, lower are darker
+/// Applies elevation-based shading to a color: higher is brighter, lower is darker.
+/// The band is the terrain's own span, not the dimension's: the base sinks with the tall
+/// datapack, and terrain fills only a slice of a 4000-block build range.
 #[inline]
-fn apply_elevation_shading(color: Rgb<u8>, y: i32) -> Rgb<u8> {
-    // Base brightness boost of 10%, plus elevation shading
-    // Shading range: -20% darker to +20% brighter (asymmetric, more bright than dark)
+fn apply_elevation_shading(color: Rgb<u8>, y: i32, base: i32, half_band: f32) -> Rgb<u8> {
+    let normalized = (((y - base) as f32 - half_band) / half_band).clamp(-1.0, 1.0);
 
-    // Normalize Y to a -1.0 to 1.0 range (roughly)
-    // y=0 -> -0.5, y=0 -> 0, y=200 -> +1.0
-    let normalized = (y as f32 / 100.0).clamp(-1.0, 1.0);
-
-    // Base 10% brightness boost + asymmetric elevation shading
-    let elevation_adjust = if normalized >= 0.0 {
-        // Above sea level: up to +20% brighter
-        normalized * 0.20
-    } else {
-        // Below sea level: up to -20% darker
-        normalized * 0.20
-    };
-
-    let multiplier = 1.10 + elevation_adjust;
+    // Base 10% brightness boost, plus -20%..+20% for elevation.
+    let multiplier = 1.10 + normalized * 0.20;
 
     Rgb([
         (color.0[0] as f32 * multiplier).clamp(0.0, 255.0) as u8,
         (color.0[1] as f32 * multiplier).clamp(0.0, 255.0) as u8,
         (color.0[2] as f32 * multiplier).clamp(0.0, 255.0) as u8,
     ])
-}
-
-/// Extracts sections from chunk data (handles both old and new formats)
-fn get_sections_from_chunk(chunk: &Value) -> Vec<&Value> {
-    let mut sections = Vec::new();
-
-    // Try new format (1.18+): directly in chunk
-    if let Value::Compound(map) = chunk {
-        if let Some(Value::List(secs)) = map.get("sections") {
-            for sec in secs {
-                sections.push(sec);
-            }
-            return sections;
-        }
-
-        // Try via Level wrapper (older format)
-        if let Some(Value::Compound(level)) = map.get("Level") {
-            if let Some(Value::List(secs)) = level.get("sections") {
-                for sec in secs {
-                    sections.push(sec);
-                }
-            }
-        }
-    }
-
-    sections
-}
-
-/// Pre-sorts sections by Y coordinate (descending) - called once per chunk
-/// Returns Vec of (section_y, section_value) for Y tracking
-fn get_sorted_sections<'a>(sections: &[&'a Value]) -> Vec<(i8, &'a Value)> {
-    let mut sorted: Vec<(i8, &Value)> = sections
-        .iter()
-        .filter_map(|s| {
-            if let Value::Compound(map) = s {
-                if let Some(Value::Byte(y)) = map.get("Y") {
-                    return Some((*y, *s));
-                }
-            }
-            None
-        })
-        .collect();
-
-    sorted.sort_by(|a, b| b.0.cmp(&a.0));
-    sorted
-}
-
-/// Finds the topmost non-air block using pre-sorted sections
-/// Returns (block_name, world_y) where world_y is the actual Y coordinate
-fn find_top_block_sorted(
-    sorted_sections: &[(i8, &Value)],
-    local_x: usize,
-    local_z: usize,
-) -> Option<(String, i32)> {
-    for (section_y, section) in sorted_sections {
-        if let Some((block_name, local_y)) = get_block_at_section(section, local_x, local_z) {
-            if !is_transparent_block(&block_name) {
-                // Calculate world Y: section_y * 16 + local_y
-                let world_y = (*section_y as i32) * 16 + local_y as i32;
-                return Some((block_name, world_y));
-            }
-        }
-    }
-
-    None
-}
-
-/// Gets the topmost non-air block in a section at the given x,z
-/// Returns (block_name, local_y) where local_y is 0-15 within the section
-fn get_block_at_section(
-    section: &Value,
-    local_x: usize,
-    local_z: usize,
-) -> Option<(String, usize)> {
-    let section_map = match section {
-        Value::Compound(m) => m,
-        _ => return None,
-    };
-
-    let block_states = match section_map.get("block_states") {
-        Some(Value::Compound(bs)) => bs,
-        _ => return None,
-    };
-
-    let palette = match block_states.get("palette") {
-        Some(Value::List(p)) => p,
-        _ => return None,
-    };
-
-    // If palette has only one block, that's the block for the entire section
-    if palette.len() == 1 {
-        // Return with local_y=15 (top of section) for single-block sections
-        return get_block_name_from_palette(&palette[0]).map(|name| (name, 15));
-    }
-
-    let data = match block_states.get("data") {
-        Some(Value::LongArray(d)) => d,
-        _ => return None,
-    };
-
-    // Calculate bits per block
-    let bits_per_block = std::cmp::max(4, (palette.len() as f64).log2().ceil() as usize);
-    let blocks_per_long = 64 / bits_per_block;
-    let mask = (1u64 << bits_per_block) - 1;
-
-    // Search from top (y=15) to bottom (y=0) within this section
-    for local_y in (0..16).rev() {
-        let block_index = local_y * 256 + local_z * 16 + local_x;
-        let long_index = block_index / blocks_per_long;
-        let bit_offset = (block_index % blocks_per_long) * bits_per_block;
-
-        if long_index >= data.len() {
-            continue;
-        }
-
-        let palette_index = ((data[long_index] as u64 >> bit_offset) & mask) as usize;
-
-        if palette_index < palette.len() {
-            if let Some(name) = get_block_name_from_palette(&palette[palette_index]) {
-                if !is_transparent_block(&name) {
-                    return Some((name, local_y));
-                }
-            }
-        }
-    }
-
-    None
-}
-
-/// Extracts block name from a palette entry
-fn get_block_name_from_palette(entry: &Value) -> Option<String> {
-    if let Value::Compound(map) = entry {
-        if let Some(Value::String(name)) = map.get("Name") {
-            return Some(name.clone());
-        }
-    }
-    None
 }
 
 /// Checks if a block should be considered transparent (look through it)
@@ -395,6 +307,24 @@ fn is_transparent_block(name: &str) -> bool {
             | "dandelion"
             | "blue_orchid"
             | "azure_bluet"
+            | "cornflower"
+            | "oxeye_daisy"
+            | "allium"
+            | "lily_of_the_valley"
+            | "red_tulip"
+            | "orange_tulip"
+            | "white_tulip"
+            | "pink_tulip"
+            | "sunflower"
+            | "lilac"
+            | "rose_bush"
+            | "peony"
+            | "sweet_berry_bush"
+            | "fern"
+            | "large_fern"
+            | "brown_mushroom"
+            | "red_mushroom"
+            | "sugar_cane"
             | "iron_bars"
             | "ladder"
             | "scaffolding"
@@ -648,6 +578,23 @@ fn get_block_colors() -> FnvHashMap<&'static str, Rgb<u8>> {
         ("green_concrete", Rgb([73, 91, 36])),
         ("red_concrete", Rgb([142, 33, 33])),
         ("black_concrete", Rgb([8, 10, 15])),
+        // Road surfaces: without these, GRAY_CONCRETE_POWDER falls back to stone's grey.
+        ("white_concrete_powder", Rgb([226, 227, 228])),
+        ("orange_concrete_powder", Rgb([227, 132, 32])),
+        ("magenta_concrete_powder", Rgb([193, 84, 185])),
+        ("light_blue_concrete_powder", Rgb([74, 181, 213])),
+        ("yellow_concrete_powder", Rgb([233, 199, 55])),
+        ("lime_concrete_powder", Rgb([125, 189, 42])),
+        ("pink_concrete_powder", Rgb([229, 153, 181])),
+        ("gray_concrete_powder", Rgb([77, 81, 85])),
+        ("light_gray_concrete_powder", Rgb([155, 155, 148])),
+        ("cyan_concrete_powder", Rgb([37, 148, 157])),
+        ("purple_concrete_powder", Rgb([132, 56, 178])),
+        ("blue_concrete_powder", Rgb([70, 73, 167])),
+        ("brown_concrete_powder", Rgb([126, 85, 54])),
+        ("green_concrete_powder", Rgb([97, 119, 45])),
+        ("red_concrete_powder", Rgb([168, 54, 51])),
+        ("black_concrete_powder", Rgb([25, 27, 32])),
         ("white_wool", Rgb([234, 236, 237])),
         ("orange_wool", Rgb([241, 118, 20])),
         ("magenta_wool", Rgb([190, 68, 179])),
@@ -941,4 +888,166 @@ fn get_block_colors() -> FnvHashMap<&'static str, Rgb<u8>> {
         ("pumpkin_stem", Rgb([120, 140, 70])),
         ("melon_stem", Rgb([120, 140, 70])),
     ])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::block_definitions::{GLASS, GRASS_BLOCK, STONE, WATER};
+    use crate::world_editor::RegionToModify;
+
+    fn accum(min_x: i32, min_z: i32, max_x: i32, max_z: i32) -> PreviewAccumulator {
+        let bbox = XZBBox::rect_from_min_max(min_x, min_z, max_x, max_z).unwrap();
+        PreviewAccumulator::new(&bbox)
+    }
+
+    #[test]
+    fn downscale_caps_output_side() {
+        // ~500 km2 world: 22400 blocks per side -> step 6, bounded output.
+        let a = accum(0, 0, 22399, 22399);
+        assert_eq!(a.step, 6);
+        assert_eq!(a.stride, 1);
+        assert_eq!(a.out_w, 3734);
+        assert_eq!(a.out_h, 3734);
+
+        let b = accum(0, 0, 999, 499);
+        assert_eq!(b.step, 1);
+        assert_eq!((b.out_w, b.out_h), (1000, 500));
+
+        // Beyond step 16 columns are strided so u16 sums cannot overflow.
+        let c = accum(0, 0, 69999, 69999);
+        assert_eq!(c.step, 18);
+        assert_eq!(c.stride, 2);
+    }
+
+    #[test]
+    fn transparent_lut_and_colors() {
+        assert!(lut_color(GLASS).is_none());
+        assert_eq!(lut_color(STONE), Some(Rgb([128, 128, 128])));
+        assert_eq!(lut_color(WATER), Some(Rgb([59, 86, 165])));
+    }
+
+    #[test]
+    fn renders_top_block_skips_transparent_and_averages() {
+        let a = accum(0, 0, 15, 15);
+        let mut region = RegionToModify::default();
+        let chunk = region.get_or_create_chunk(0, 0);
+        // Column (0,0): stone at y=0.
+        chunk.set_block(0, 0, 0, STONE);
+        // Column (1,0): grass at y=5 hidden under glass at y=10 (transparent).
+        chunk.set_block(1, 5, 0, GRASS_BLOCK);
+        chunk.set_block(1, 10, 0, GLASS);
+        a.ingest_region(0, 0, &region);
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("preview.png");
+        a.finalize(&path).unwrap();
+        let img = image::open(&path).unwrap().to_rgb8();
+        assert_eq!(img.dimensions(), (16, 16));
+        assert_eq!(
+            *img.get_pixel(0, 0),
+            apply_elevation_shading(Rgb([128, 128, 128]), 0, a.shade_base, a.shade_half_band)
+        );
+        assert_eq!(
+            *img.get_pixel(1, 0),
+            apply_elevation_shading(Rgb([86, 125, 70]), 5, a.shade_base, a.shade_half_band)
+        );
+        // Untouched column stays white.
+        assert_eq!(*img.get_pixel(5, 5), Rgb([255, 255, 255]));
+    }
+
+    #[test]
+    fn box_average_and_halo_clipping() {
+        // 8192-wide world -> step 2: columns (0,0) and (1,0) share one pixel.
+        let a = accum(0, 0, 8191, 15);
+        assert_eq!(a.step, 2);
+        let mut region = RegionToModify::default();
+        let chunk = region.get_or_create_chunk(0, 0);
+        chunk.set_block(0, 0, 0, STONE);
+        chunk.set_block(1, 0, 0, WATER);
+        a.ingest_region(0, 0, &region);
+        // Halo region entirely outside the bbox must be clipped without panicking.
+        let mut halo = RegionToModify::default();
+        halo.get_or_create_chunk(0, 0).set_block(0, 0, 0, STONE);
+        a.ingest_region(-1, -1, &halo);
+
+        let s = apply_elevation_shading(Rgb([128, 128, 128]), 0, a.shade_base, a.shade_half_band);
+        let w = apply_elevation_shading(Rgb([59, 86, 165]), 0, a.shade_base, a.shade_half_band);
+        let expected = Rgb([
+            ((s.0[0] as u32 + w.0[0] as u32) / 2) as u8,
+            ((s.0[1] as u32 + w.0[1] as u32) / 2) as u8,
+            ((s.0[2] as u32 + w.0[2] as u32) / 2) as u8,
+        ]);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("preview.png");
+        a.finalize(&path).unwrap();
+        let img = image::open(&path).unwrap().to_rgb8();
+        assert_eq!(img.dimensions(), (4096, 8));
+        assert_eq!(*img.get_pixel(0, 0), expected);
+        assert_eq!(*img.get_pixel(1, 0), Rgb([255, 255, 255]));
+    }
+}
+
+#[cfg(test)]
+mod elevation_shading_tests {
+    use super::*;
+
+    const GREY: Rgb<u8> = Rgb([100, 100, 100]);
+
+    fn shade(y: i32, base: i32, top: i32) -> i32 {
+        let half_band = (top - base).max(MIN_SHADING_BAND) as f32 / 2.0;
+        i32::from(apply_elevation_shading(GREY, y, base, half_band).0[0])
+    }
+
+    #[test]
+    fn a_city_band_spans_the_whole_multiplier_range() {
+        // Vanilla city: terrain -62..64, nowhere near the 319 dimension ceiling.
+        assert_eq!(shade(-62, -62, 64), 90, "terrain base is the darkest");
+        // 126 blocks of relief is just under the floor band, so the top lands a shade short.
+        assert!(
+            shade(64, -62, 64) >= 129,
+            "the highest hill is the brightest"
+        );
+        assert!(shade(-40, -62, 64) < shade(20, -62, 64));
+    }
+
+    #[test]
+    fn a_sunk_base_grades_the_whole_relief() {
+        // Matterhorn at scale 4: base -1876, terrain up to 2016.
+        assert_eq!(shade(-1876, -1876, 2016), 90);
+        assert_eq!(shade(2016, -1876, 2016), 130);
+        assert!(
+            shade(-100, -1876, 2016) < shade(1500, -1876, 2016),
+            "a 1600-block climb must change the shade"
+        );
+
+        // Y=0 carries no meaning in a 4000-block world: columns either side of it are
+        // 5% of the band apart and must shade alike, not split the range in two.
+        let across_zero = shade(101, -1876, 2016) - shade(-101, -1876, 2016);
+        assert!(across_zero * 4 < 40, "shading splits at Y=0: {across_zero}");
+    }
+
+    #[test]
+    fn a_flat_bbox_still_grades_what_stands_on_it() {
+        assert_eq!(shade(-62, -62, -62), 90);
+        let roof = shade(-42, -62, -62);
+        assert!(
+            roof > 90 && roof < 130,
+            "roof shade {roof} is a saturated tone"
+        );
+    }
+
+    #[test]
+    fn shading_stays_inside_the_multiplier_bounds_outside_the_band() {
+        assert_eq!(
+            shade(-2032, -1876, 2016),
+            90,
+            "below the base clamps to the darkest"
+        );
+        assert_eq!(
+            shade(4000, -1876, 2016),
+            130,
+            "above the terrain clamps to the brightest"
+        );
+    }
 }

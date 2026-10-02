@@ -166,8 +166,10 @@ fn parse_gml(path: &Path) -> Result<Vec<Gsi3dBuilding>, String> {
                 }
             }
             Ok(Event::Text(ref e)) if in_bld => {
+                // quick-xml >= 0.38 reports entity references as separate events; the GML
+                // fields read here (ftCode, posList, elevations) carry none, so decode only.
                 let text = e
-                    .unescape()
+                    .decode()
                     .map_err(|err| format!("XML text decode error: {err}"))?;
                 match current_tag {
                     CurrentTag::FtCode => {
@@ -207,7 +209,12 @@ fn parse_gml(path: &Path) -> Result<Vec<Gsi3dBuilding>, String> {
                 current_tag = CurrentTag::None;
             }
             Ok(Event::Eof) => break,
-            Err(e) => return Err(format!("XML parse error at position {}: {e}", reader.error_position())),
+            Err(e) => {
+                return Err(format!(
+                    "XML parse error at position {}: {e}",
+                    reader.error_position()
+                ))
+            }
             _ => {}
         }
         buf.clear();

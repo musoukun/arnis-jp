@@ -1,40 +1,74 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod args;
-#[cfg(feature = "bedrock")]
 mod bedrock_block_map;
+mod bench;
+mod biome;
 mod block_definitions;
+mod block_palette;
 mod bresenham;
+mod building_facades;
 mod building_height;
 mod building_metadata;
+mod canopy;
+mod caves;
+mod celestial;
+mod climate;
 mod clipping;
 mod colors;
 mod coordinate_system;
 mod data_processing;
+mod decals;
 mod deterministic_rng;
+mod ecoregion;
 mod element_processing;
+mod elevation;
 mod elevation_data;
 mod floodfill;
 mod floodfill_cache;
+mod geo_grid;
+mod grid_ops;
 mod ground;
+mod ground_decoration;
 mod ground_generation;
 mod gsi_data;
 mod gsi_elevation;
 mod jp_data_sources;
 mod jp_export;
 mod land_cover;
+mod landmarks;
+mod luanti_block_map;
+mod map_item;
+mod map_item_palette;
+mod map_preview;
 mod map_renderer;
 mod map_transformation;
+mod mapillary;
+mod models_3d;
+mod net;
+mod one_world;
+mod ore_generation;
 mod osm_parser;
+mod osm_tiles;
+mod overture;
+#[cfg(feature = "gui")]
+mod preview_3d;
 #[cfg(feature = "gui")]
 mod progress;
+mod projection;
 mod retrieve_data;
 mod satellite_colors;
+mod structures;
 #[cfg(feature = "gui")]
 mod telemetry;
+mod terrain_surface;
 #[cfg(test)]
 mod test_utilities;
+mod tile;
+mod trees;
 mod version_check;
+mod voxy;
+mod water_depth;
 mod world_editor;
 mod world_mapping;
 mod world_utils;
@@ -43,7 +77,14 @@ use args::Args;
 use clap::Parser;
 use colored::*;
 use std::path::PathBuf;
+#[cfg(all(feature = "gui", target_os = "linux"))]
+use std::process::Command;
 use std::{env, fs, io::Write};
+
+// mimalloc scales far better than the system allocator under the concurrent
+// 4 KiB section-vec / hashmap churn of tile-parallel processing.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 #[cfg(feature = "gui")]
 mod gui;
@@ -51,8 +92,12 @@ mod gui;
 // If the user does not want the GUI, it's easiest to just mock the progress module to do nothing
 #[cfg(not(feature = "gui"))]
 mod progress {
+    /// Mirrors the real module's constant so callers outside the GUI feature
+    /// still compile; nothing here reads it, the emits below do nothing.
+    pub const MESSAGE_ONLY: f64 = -1.0;
     pub fn emit_gui_error(_message: &str) {}
     pub fn emit_gui_progress_update(_progress: f64, _message: &str) {}
+    pub fn emit_gui_progress_update_ex(_progress: f64, _message: &str, _streaming: bool) {}
     pub fn emit_map_preview_ready() {}
     pub fn emit_show_in_folder(_path: &str) {}
     pub fn is_running_with_gui() -> bool {
@@ -60,7 +105,87 @@ mod progress {
     }
 }
 #[cfg(target_os = "windows")]
-use windows::Win32::System::Console::{AttachConsole, FreeConsole, ATTACH_PARENT_PROCESS};
+use windows::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
+
+#[cfg(all(feature = "gui", target_os = "linux"))]
+const EGL_ZINK_RETRY_MARKER: &str = "ARNIS_EGL_ZINK_RETRY";
+
+#[cfg(all(feature = "gui", target_os = "linux"))]
+fn has_user_rendering_override() -> bool {
+    [
+        "MESA_LOADER_DRIVER_OVERRIDE",
+        "LIBGL_ALWAYS_SOFTWARE",
+        "GALLIUM_DRIVER",
+    ]
+    .iter()
+    .any(|name| env::var_os(name).is_some())
+}
+
+#[cfg(all(feature = "gui", target_os = "linux"))]
+fn is_egl_startup_failure(error_message: &str) -> bool {
+    let lowered = error_message.to_ascii_lowercase();
+    lowered.contains("egl_not_initialized")
+        || lowered.contains("surfaceless egl")
+        || (lowered.contains("libegl") && lowered.contains("failed"))
+}
+
+#[cfg(all(feature = "gui", target_os = "linux"))]
+fn retry_gui_with_zink() -> Result<(), String> {
+    let executable = env::current_exe()
+        .map_err(|e| format!("Failed to locate current executable for EGL fallback retry: {e}"))?;
+    let status = Command::new(executable)
+        .env(EGL_ZINK_RETRY_MARKER, "1")
+        .env("MESA_LOADER_DRIVER_OVERRIDE", "zink")
+        .env("LIBGL_ALWAYS_SOFTWARE", "0")
+        .env("GALLIUM_DRIVER", "zink")
+        .status()
+        .map_err(|e| format!("Failed to relaunch with zink EGL workaround: {e}"))?;
+
+    std::process::exit(status.code().unwrap_or(1));
+}
+
+/// Reattach to the console this process was launched from, so terminal output
+/// works in both CLI and GUI runs.
+///
+/// Deliberately no `FreeConsole` first: a windows-subsystem process starts with
+/// no console of its own, so `AttachConsole` alone reaches the parent terminal.
+/// Freeing first can only invalidate the inherited handles, and a `FreeConsole`
+/// that succeeds followed by a reattach that fails leaves stdout/stderr pointing
+/// at a dead console, which turns every later `println!` into a panic.
+#[cfg(target_os = "windows")]
+fn attach_parent_console() {
+    unsafe {
+        let _ = AttachConsole(ATTACH_PARENT_PROCESS);
+    }
+}
+
+/// The One World a CLI run holds, and the folder if the run created it.
+struct OneWorldRun {
+    lock: world_utils::SessionLock,
+    created: Option<PathBuf>,
+}
+
+static ONE_WORLD_RUN: std::sync::Mutex<Option<OneWorldRun>> = std::sync::Mutex::new(None);
+
+/// Releases the One World lock. On failure a world this run created is removed.
+fn release_one_world(failed: bool) {
+    let run = ONE_WORLD_RUN
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take();
+    if let Some(OneWorldRun { lock, created }) = run {
+        drop(lock);
+        if let (true, Some(dir)) = (failed, created) {
+            let _ = fs::remove_dir_all(dir);
+        }
+    }
+}
+
+/// `process::exit` skips destructors, so failures go through here.
+fn exit_failed() -> ! {
+    release_one_world(true);
+    std::process::exit(1);
+}
 
 fn run_cli() {
     // Configure thread pool with 90% CPU cap to keep system responsive
@@ -90,17 +215,16 @@ fn run_cli() {
         repository.bright_white().bold()
     );
 
-    // Check for updates
-    if let Err(e) = version_check::check_for_updates() {
-        eprintln!(
-            "{}: {}",
-            "Error checking for version updates".red().bold(),
-            e
-        );
-    }
+    // Fire-and-forget update check; prints a one-line notice on a background thread.
+    version_check::check_for_updates_async();
 
     // Parse input arguments
-    let args: Args = Args::parse();
+    let mut args: Args = Args::parse();
+    args::apply_body_defaults(&mut args);
+    // Caves carve into the filled ground, so they bring it with them.
+    if args.caves {
+        args.fillground = true;
+    }
 
     // Validate arguments (path requirements differ between Java and Bedrock)
     if let Err(e) = args::validate_args(&args) {
@@ -108,35 +232,210 @@ fn run_cli() {
         std::process::exit(1);
     }
 
-    // Early guard: --bedrock requires the bedrock cargo feature
-    if args.bedrock && !cfg!(feature = "bedrock") {
+    // Cave zone-map mode renders the cave biome layout for --bbox and exits, before any world
+    // exists. It uses the same zone picker, seed and --cave-biomes amounts as --caves.
+    if args.cave_zone_map.is_some() {
+        if let Err(e) = caves::zone_map::render(&args) {
+            eprintln!("{}: {}", "Error".red().bold(), e);
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    // Open up the world floor before anything touches the editor. The bundled packs already
+    // grant the full engine range; without this the lower half of it goes unused. The ceiling
+    // goes with it: chunk serialization needs the whole dimension span, not just the floor.
+    world_editor::set_world_bounds(
+        ground::extended_min_y_for(&args),
+        ground::world_top_y_for(&args),
+    );
+
+    if args.legacy_terrain {
         eprintln!(
-            "{}: The --bedrock flag requires the 'bedrock' feature. Rebuild with: cargo build --features bedrock",
-            "Error".red().bold()
+            "{} --terrain is deprecated: terrain is now on by default. \
+             Use --mode geo-only for flat ground.",
+            "Note:".yellow().bold()
         );
-        std::process::exit(1);
+    }
+    // Terrain-only never touches Overpass, so the OSM in/out file args have nothing to act on.
+    if args.skip_objects() && (args.file.is_some() || args.save_json_file.is_some()) {
+        eprintln!(
+            "{} --mode terrain-only skips OpenStreetMap objects; --file/--save-json-file are ignored.",
+            "Note:".yellow().bold()
+        );
+    }
+
+    // Resolve the effective bounding box ONCE, up front, and thread the concrete value to every
+    // consumer below (the CLI bbox is now optional). Precedence: explicit --bbox > file <bounds>
+    // element > node-coordinate extent.
+    //
+    // A local .osm/.xml file is the only bbox source when --bbox is omitted, so it must be loaded
+    // BEFORE the parallel fetch scope (Overture + land cover need the bbox) and before the bedrock
+    // world-name / area-size steps below. The parsed data is kept in `preloaded_osm` so the file
+    // isn't read twice. The Overpass and terrain-only paths already know the bbox from --bbox.
+    let skip_objects = args.skip_objects();
+    let (mut preloaded_osm, mut effective_bbox) = match (skip_objects, args.file.as_deref()) {
+        (false, Some(file)) => {
+            let (data, file_bounds) = match retrieve_data::fetch_data_from_file(file) {
+                Ok(loaded) => loaded,
+                Err(e) => {
+                    eprintln!("{} Failed to load OSM file: {}", "Error:".red().bold(), e);
+                    std::process::exit(1);
+                }
+            };
+            let bbox = match osm_parser::resolve_bbox(args.bbox, file_bounds, &data) {
+                Some(bbox) => bbox,
+                None => {
+                    eprintln!(
+                        "{} could not derive a bounding box from '{file}' (no <bounds> element and no usable node extent); pass --bbox explicitly.",
+                        "Error:".red().bold()
+                    );
+                    std::process::exit(1);
+                }
+            };
+            // Report where a derived bbox came from (an explicit --bbox is echoed by the parse step).
+            if args.bbox.is_none() {
+                let source = if file_bounds.is_some() {
+                    "file <bounds> element"
+                } else {
+                    "node coordinate extent"
+                };
+                println!(
+                    "Derived bounding box from {source}: {},{},{},{}",
+                    bbox.min().lat(),
+                    bbox.min().lng(),
+                    bbox.max().lat(),
+                    bbox.max().lng()
+                );
+            }
+            (Some(data), bbox)
+        }
+        _ => {
+            // Overpass or terrain-only: --bbox is required (enforced by validate_args above).
+            let bbox = args.bbox.unwrap_or_else(|| {
+                eprintln!(
+                    "{} A bounding box is required. Provide --bbox, or --file with a local .osm/.xml file.",
+                    "Error:".red().bold()
+                );
+                std::process::exit(1);
+            });
+            (None, bbox)
+        }
+    };
+
+    // One World: snaps the bbox to the world's chunk grid and holds its lock.
+    let mut one_world_paths: Option<PathBuf> = None;
+    if args.one_world {
+        let base_dir = args.path.clone().unwrap_or_else(|| {
+            eprintln!(
+                "{} --one-world needs --output-dir (the saves folder).",
+                "Error:".red().bold()
+            );
+            std::process::exit(1);
+        });
+        let name = args
+            .world_name
+            .as_deref()
+            .and_then(world_utils::world_folder_name)
+            .unwrap_or_else(|| one_world::DEFAULT_WORLD_NAME.to_string());
+        let world_dir = base_dir.join(name);
+        let session =
+            one_world::prepare(&world_dir, &effective_bbox, &mut args).unwrap_or_else(|e| {
+                eprintln!("{} {}", "Error:".red().bold(), e);
+                std::process::exit(1);
+            });
+        effective_bbox = session.llbbox;
+        // The world decides the build height.
+        world_editor::set_world_bounds(
+            ground::extended_min_y_for(&args),
+            ground::world_top_y_for(&args),
+        );
+        *ONE_WORLD_RUN.lock().unwrap_or_else(|e| e.into_inner()) = Some(OneWorldRun {
+            lock: session.lock,
+            created: session.created.then(|| world_dir.clone()),
+        });
+        if args.disable_height_limit && session.created {
+            if let Err(e) = world_utils::install_tall_datapack(&world_dir) {
+                eprintln!(
+                    "{} Failed to install tall-world datapack: {}",
+                    "Error:".red().bold(),
+                    e
+                );
+                exit_failed();
+            }
+        }
+        one_world_paths = Some(world_dir);
+    }
+    let args = args;
+
+    // Heads-up for very large areas: generation is long and memory-heavy, and big
+    // requests load the public OpenStreetMap / elevation servers. Non-blocking.
+    {
+        const MAX_RECOMMENDED_AREA_KM2: f64 = 250.0;
+        // area_km2 assumes Earth's radius, so a Moon bbox reads 13x too large.
+        let r = args.body.scale_ratio();
+        let area_km2 = effective_bbox.area_km2() * r * r;
+        // Earth only: the coarse fixed scale makes a large area the normal case.
+        if args.body.is_earth() && area_km2 > MAX_RECOMMENDED_AREA_KM2 {
+            eprintln!(
+                "{} Large area selected (~{:.0} km²). Generation may take a long time and \
+                 use many GB of memory, and places heavy load on public OpenStreetMap and \
+                 elevation servers. Use a smaller area if this was unintended.",
+                "Note:".yellow().bold(),
+                area_km2
+            );
+        }
     }
 
     // Determine world format and output path
     let world_format = if args.bedrock {
         world_editor::WorldFormat::BedrockMcWorld
+    } else if args.luanti {
+        world_editor::WorldFormat::LuantiWorld
     } else {
         world_editor::WorldFormat::JavaAnvil
     };
 
     // Build the generation output path and level name
-    let (generation_path, level_name) = if args.bedrock {
+    let (generation_path, level_name) = if args.mapillary_probe {
+        // The probe reports coverage and exits, so it must not allocate (and
+        // leave behind) an empty world directory on the way there.
+        (PathBuf::new(), None)
+    } else if args.bedrock {
         // Bedrock: generate .mcworld file in user-specified path or Desktop
         let output_dir = args
             .path
             .clone()
             .unwrap_or_else(world_utils::get_bedrock_output_directory);
-        let (output_path, lvl_name) = world_utils::build_bedrock_output(&args.bbox, output_dir);
+        let (output_path, lvl_name) =
+            world_utils::build_bedrock_output(&effective_bbox, output_dir);
         (output_path, Some(lvl_name))
+    } else if args.luanti {
+        let base_dir = args
+            .path
+            .clone()
+            .unwrap_or_else(world_utils::get_luanti_worlds_directory);
+        let _ = std::fs::create_dir_all(&base_dir);
+        let mut counter = 1;
+        let world_name = loop {
+            let candidate = format!("Arnis Luanti World {counter}");
+            if !base_dir.join(&candidate).exists() {
+                break candidate;
+            }
+            counter += 1;
+        };
+        let world_path = base_dir.join(&world_name);
+        println!(
+            "Creating Luanti world at: {}",
+            world_path.display().to_string().bright_white().bold()
+        );
+        (world_path, Some(world_name))
+    } else if let Some(world_dir) = one_world_paths.clone() {
+        (world_dir, None)
     } else {
         // Java: create a new world in the provided output directory
         let base_dir = args.path.clone().unwrap();
-        let world_path = match world_utils::create_new_world(&base_dir, None) {
+        let world_path = match world_utils::create_new_world(&base_dir) {
             Ok(path) => PathBuf::from(path),
             Err(e) => {
                 eprintln!("{} {}", "Error:".red().bold(), e);
@@ -147,31 +446,196 @@ fn run_cli() {
             "Created new world at: {}",
             world_path.display().to_string().bright_white().bold()
         );
+        if args.disable_height_limit {
+            if let Err(e) = world_utils::install_tall_datapack(&world_path) {
+                eprintln!(
+                    "{} Failed to install tall-world datapack: {}",
+                    "Error:".red().bold(),
+                    e
+                );
+                std::process::exit(1);
+            }
+            eprintln!(
+                "Note: tall-world datapack installed (requires Minecraft 1.21.4+). \
+                 First load will prompt 'Experimental Features'; world can't be uploaded to Realms."
+            );
+        }
         (world_path, None)
     };
 
-    // Fetch data
-    let mut raw_data = match &args.file {
-        Some(file) => retrieve_data::fetch_data_from_file(file),
-        None => retrieve_data::fetch_data_from_overpass(
-            args.bbox,
-            args.debug,
-            args.downloader.as_str(),
-            args.save_json_file.as_deref(),
-        ),
+    // Top-level phase timer (active only under --benchmark). generate_world has
+    // its own internal Bench for the block-placement phases.
+    let mut bench = bench::Bench::new(args.benchmark);
+
+    // Terrain-only (or a scale too small to render objects) skips every object source:
+    // no Overpass query, no Overture footprints. Land cover is still fetched.
+    if args.skip_objects_due_to_scale() {
+        println!(
+            "{} Scale {:.2} is below {:.2}: skipping OpenStreetMap and Overture objects (terrain and land cover only)",
+            "[1/7]".bold(),
+            args.scale,
+            args::OBJECT_SKIP_SCALE
+        );
+    } else if skip_objects {
+        println!(
+            "{} Terrain-only mode: skipping OpenStreetMap and Overture objects",
+            "[1/7]".bold()
+        );
     }
-    .expect("Failed to fetch data");
 
-    // Merge GSI building data if --gsi flag is set
-    jp_data_sources::merge_gsi_buildings_if_enabled(&args, &mut raw_data);
+    // The Mapillary facade pipeline needs only the bbox too, and its downloads
+    // are the longest thing in a run that uses it, so it starts here and is
+    // collected inside `generate_world_with_options`, just before the buildings.
+    let facade_job = mapillary::FacadeJob::start(&args, effective_bbox);
+    if facade_job.is_running() {
+        println!(
+            "{} Fetching Mapillary street-level imagery...",
+            "  [+]".bold()
+        );
+    }
 
-    let mut ground = ground::generate_ground_data(&args);
+    // OSM, Overture and elevation/land-cover fetches only need the bbox, so run them in parallel.
+    if args.overture && !skip_objects {
+        println!("{} Fetching Overture Maps data...", "  [+]".bold());
+    }
+    let fetch_start = std::time::Instant::now();
+    let (raw_data, overture_data, mut ground) = std::thread::scope(|s| {
+        let overture_handle = s.spawn(|| {
+            let t = std::time::Instant::now();
+            let data = if args.overture && !skip_objects {
+                overture::fetch_overture_buildings(
+                    &effective_bbox,
+                    &projection::ProjectionSpec::from_args(&args),
+                    args.overture_source,
+                    args.debug,
+                )
+            } else {
+                overture::OvertureData::default()
+            };
+            (data, t.elapsed())
+        });
+        let ground_handle = s.spawn(|| {
+            let t = std::time::Instant::now();
+            let ground = ground::generate_ground_data(&args, effective_bbox);
+            (ground, t.elapsed())
+        });
+
+        let t = std::time::Instant::now();
+        // A local file was already parsed up front (to derive the bbox), so reuse that data.
+        // Terrain-only carries no objects. Otherwise fetch from Overpass, in parallel with the
+        // Overture and land-cover fetches spawned above.
+        let raw_data = if skip_objects {
+            osm_parser::OsmData::empty()
+        } else if let Some(data) = preloaded_osm.take() {
+            data
+        } else {
+            retrieve_data::fetch_osm_data(
+                effective_bbox,
+                args.debug,
+                args.downloader.as_str(),
+                args.save_json_file.as_deref(),
+                &args.osm_tiles_url,
+                !args.no_tile_archive,
+            )
+            .unwrap_or_else(|e| {
+                eprintln!("{} Failed to fetch data: {e}", "Error:".red().bold());
+                exit_failed();
+            })
+        };
+        bench.report("osm_fetch", t.elapsed());
+
+        // A panicked worker already reported itself through the panic hook, so
+        // degrade instead of taking the whole run down with it.
+        let (overture_data, overture_dur) = overture_handle.join().unwrap_or_else(|_| {
+            eprintln!(
+                "{} Overture fetch failed, continuing without Overture buildings.",
+                "Warning:".yellow().bold()
+            );
+            (overture::OvertureData::default(), std::time::Duration::ZERO)
+        });
+        bench.report("overture_fetch", overture_dur);
+        let (ground, ground_dur) = ground_handle.join().unwrap_or_else(|_| {
+            eprintln!("{} Terrain fetch failed.", "Error:".red().bold());
+            exit_failed();
+        });
+        bench.report("terrain_total", ground_dur);
+
+        (raw_data, overture_data, ground)
+    });
+    bench.report("fetch_total", fetch_start.elapsed());
+    bench.reset();
+
+    // arnis-jp: merge GSI (国土地理院) building polygons into the OSM data (--gsi)
+    let mut raw_data = raw_data;
+    if !skip_objects {
+        jp_data_sources::merge_gsi_buildings_if_enabled(&args, effective_bbox, &mut raw_data);
+    }
 
     // Parse raw data
-    let (mut parsed_elements, mut xzbbox) =
-        osm_parser::parse_osm_data(raw_data, args.bbox, args.scale, args.debug);
+    let (mut parsed_elements, mut xzbbox, outline_suppression, part_groups) =
+        osm_parser::parse_osm_data(
+            raw_data,
+            effective_bbox,
+            args.debug,
+            &projection::ProjectionSpec::from_args(&args),
+        );
+    bench.mark("parse_osm");
+
+    // Merge the Overture buildings now that the OSM elements are parsed.
+    let overture::OvertureData {
+        elements: overture_elements,
+        hints: overture_hints,
+    } = overture_data;
+
+    // Fill height/levels on OSM buildings that have neither, before the
+    // footprints are merged (Overture's own ways carry their tags already).
+    let enriched = overture_hints.apply(&mut parsed_elements);
+    if enriched > 0 {
+        println!(
+            "  Filled heights on {} OSM buildings from Overture Maps",
+            enriched.to_string().bright_white().bold()
+        );
+    }
+
+    if !overture_elements.is_empty() {
+        let before_count = parsed_elements.len();
+        let unique_overture =
+            overture::deduplicate_against_osm(overture_elements, &parsed_elements);
+        parsed_elements.extend(unique_overture);
+        let added = parsed_elements.len() - before_count;
+        println!(
+            "  Added {} buildings from Overture Maps",
+            added.to_string().bright_white().bold()
+        );
+    } else if args.overture && !skip_objects && enriched == 0 {
+        println!("  No additional buildings from Overture Maps for this area");
+    }
+
+    // arnis-jp: satellite-based building wall colours (--satellite)
+    jp_data_sources::apply_satellite_colors_if_enabled(
+        &args,
+        &effective_bbox,
+        &mut parsed_elements,
+        &xzbbox,
+    );
+
     parsed_elements
         .sort_by_key(|element: &osm_parser::ProcessedElement| osm_parser::get_priority(element));
+    bench.mark("sort_priority");
+
+    // OSM water override first, then bridge repair handles remaining bridge-shadow cells.
+    ground.apply_osm_water_override(&parsed_elements, &xzbbox);
+    ground.apply_osm_land_override(&parsed_elements, &xzbbox, args.scale);
+    if args.debug {
+        ground.save_land_cover_debug_image("landcover_debug_post_osm_water");
+    }
+    ground.apply_bridge_land_cover_repair(&parsed_elements, &xzbbox, args.scale);
+    // Last, once the water has stopped moving.
+    ground.mark_beaches();
+    if args.debug {
+        ground.save_land_cover_debug_image("landcover_debug_post_bridge_repair");
+    }
+    bench.mark("landcover_osm_repair");
 
     // Write the parsed OSM data to a file for inspection
     if args.debug {
@@ -190,24 +654,38 @@ fn run_cli() {
         }
     }
 
-    // Apply satellite-based building colors
-    jp_data_sources::apply_satellite_colors_if_enabled(&args, &mut parsed_elements, &xzbbox);
-
     // Transform map (parsed_elements). Operations are defined in a json file
     map_transformation::transform_map(&mut parsed_elements, &mut xzbbox, &mut ground);
+    bench.mark("transform_map");
+
+    // The default spawn is picked in the unrotated area and turned with it, as in the GUI.
+    let pre_rotation_bbox = xzbbox.clone();
+
+    // Apply rotation if specified
+    if args.rotation.abs() > f64::EPSILON {
+        if let Err(e) = map_transformation::rotate::rotate_world(
+            args.rotation,
+            &mut parsed_elements,
+            &mut xzbbox,
+            &mut ground,
+        ) {
+            eprintln!("{} Rotation failed: {}", "Error:".red().bold(), e);
+            std::process::exit(1);
+        }
+    }
 
     // Convert spawn lat/lng to Minecraft XZ coordinates if provided
     let spawn_point: Option<(i32, i32)> = match (args.spawn_lat, args.spawn_lng) {
         (Some(lat), Some(lng)) => {
             use coordinate_system::geographic::LLPoint;
-            use coordinate_system::transformation::CoordTransformer;
 
             let llpoint = LLPoint::new(lat, lng).unwrap_or_else(|e| {
                 eprintln!("{} Invalid spawn coordinates: {}", "Error:".red().bold(), e);
                 std::process::exit(1);
             });
 
-            let (transformer, _) = CoordTransformer::llbbox_to_xzbbox(&args.bbox, args.scale)
+            let (transformer, pre_rot_bbox) = projection::ProjectionSpec::from_args(&args)
+                .transformer(&effective_bbox)
                 .unwrap_or_else(|e| {
                     eprintln!(
                         "{} Failed to convert spawn point: {}",
@@ -218,50 +696,108 @@ fn run_cli() {
                 });
 
             let xzpoint = transformer.transform_point(llpoint);
-            Some((xzpoint.x, xzpoint.z))
+            let (sx, sz) = map_transformation::rotate::rotate_xz_point(
+                xzpoint.x,
+                xzpoint.z,
+                args.rotation,
+                &pre_rot_bbox,
+            );
+
+            Some((sx, sz))
         }
         _ => None,
     };
 
+    // Derive terrain-aware spawn Y while `ground` is still in scope (it gets
+    // moved into `generate_world_with_options` below). Used only for Java's
+    // post-generation `set_spawn_in_level_dat` call — Bedrock derives spawn Y
+    // independently inside `BedrockWriter::write_level_dat`.
+    //
+    // Without a spawn given, Java starts at the corner of the area like the GUI does. The
+    // level.dat template's own spot lies outside the area: beside it in a flat world, and
+    // over nothing at all in a void one.
+    let java_spawn = spawn_point.or_else(|| {
+        (world_format == world_editor::WorldFormat::JavaAnvil).then(|| {
+            map_transformation::rotate::rotate_xz_point(
+                pre_rotation_bbox.min_x() + 1,
+                pre_rotation_bbox.min_z() + 1,
+                args.rotation,
+                &pre_rotation_bbox,
+            )
+        })
+    });
+    let spawn_y_for_java = java_spawn.map(|(sx, sz)| {
+        use coordinate_system::cartesian::XZPoint;
+        let rel = XZPoint::new(sx - xzbbox.min_x(), sz - xzbbox.min_z());
+        ground.level(rel) + 3
+    });
+
     // Build generation options
-    // Compute coordinate transformation parameters for world_mapping.json
-    let (coord_transformer, _) =
-        coordinate_system::transformation::CoordTransformer::llbbox_to_xzbbox(&args.bbox, args.scale)
-            .expect("Failed to create coordinate transformer");
+    let luanti_game = if args.luanti {
+        Some(luanti_block_map::LuantiGame::Mineclonia)
+    } else {
+        None
+    };
+
+    // Probe mode stops here: it exists to answer "is this area covered?" before
+    // anyone waits on a full generation.
+    if args.mapillary_probe {
+        let Some(token) = args.mapillary_token.as_deref().filter(|t| !t.is_empty()) else {
+            eprintln!(
+                "{} --mapillary-probe needs a token; pass --mapillary-token or set MAPILLARY_TOKEN.",
+                "Error:".red().bold()
+            );
+            std::process::exit(1);
+        };
+        let debug_dir = args.mapillary_debug_dir.clone();
+        match mapillary::sample_area(
+            &parsed_elements,
+            &args,
+            effective_bbox,
+            token,
+            debug_dir.is_some(),
+        )
+        .and_then(|report| mapillary::report(&report, debug_dir.as_deref()))
+        {
+            Ok(()) => std::process::exit(0),
+            Err(e) => {
+                eprintln!("{} Mapillary probe failed: {e}", "Error:".red().bold());
+                std::process::exit(1);
+            }
+        }
+    }
 
     let generation_options = data_processing::GenerationOptions {
         path: generation_path.clone(),
         format: world_format,
         level_name,
         spawn_point,
-        scale: args.scale,
-        jp_export: Some(jp_export::JpExportOptions::from_transformer(&coord_transformer)),
+        luanti_game,
+        ground_level: args.ground_level,
+        facades: facade_job,
+        // arnis-jp: buildings.json / world_mapping.json + GSI-3D / PLATEAU heights
+        jp: match jp_data_sources::build_jp_generation(&args, &effective_bbox) {
+            Ok(jp) => Some(jp),
+            Err(e) => {
+                eprintln!(
+                    "{} arnis-jp export disabled: {e}",
+                    "Warning:".yellow().bold()
+                );
+                None
+            }
+        },
     };
 
-    // Build height resolver with external data sources
-    let mut height_resolver = building_height::HeightResolver::new(
-        coord_transformer.min_lat(),
-        coord_transformer.min_lng(),
-        coord_transformer.len_lat(),
-        coord_transformer.len_lng(),
-        coord_transformer.scale_factor_x(),
-        coord_transformer.scale_factor_z(),
-    );
-
-    // Register Japan-specific height providers (GSI-3D, PLATEAU)
-    jp_data_sources::add_jp_height_providers(&args, &mut height_resolver);
-
     // Generate world
-    let jp_ctx = jp_export::JpExportContext::new();
     match data_processing::generate_world_with_options(
         parsed_elements,
         xzbbox,
-        args.bbox,
+        effective_bbox,
         ground,
         &args,
         generation_options,
-        height_resolver,
-        Some(jp_ctx),
+        outline_suppression,
+        part_groups,
     ) {
         Ok(_) => {
             if args.bedrock {
@@ -272,12 +808,16 @@ fn run_cli() {
                 );
             }
 
-            // For Java Edition, update spawn point in level.dat if provided
-            if !args.bedrock {
-                if let Some((spawn_x, spawn_z)) = spawn_point {
-                    if let Err(e) =
-                        world_utils::set_spawn_in_level_dat(&generation_path, spawn_x, spawn_z)
-                    {
+            // For Java Edition, write the spawn point into level.dat
+            let extending = args.one_world_run.as_ref().is_some_and(|r| r.extending);
+            if !args.bedrock && !extending {
+                if let (Some((spawn_x, spawn_z)), Some(spawn_y)) = (java_spawn, spawn_y_for_java) {
+                    if let Err(e) = world_utils::set_spawn_in_level_dat(
+                        &generation_path,
+                        spawn_x,
+                        spawn_y,
+                        spawn_z,
+                    ) {
                         eprintln!(
                             "{} Failed to set spawn point in level.dat: {}",
                             "Warning:".yellow().bold(),
@@ -289,26 +829,44 @@ fn run_cli() {
         }
         Err(e) => {
             eprintln!("{} {}", "Error:".red().bold(), e);
-            std::process::exit(1);
+            exit_failed();
         }
     }
+    release_one_world(false);
 }
 
 fn main() {
-    // If on Windows, free and reattach to the parent console when using as a CLI tool
-    // Either of these can fail, but if they do it is not an issue, so the return value is ignored
     #[cfg(target_os = "windows")]
-    unsafe {
-        let _ = FreeConsole();
-        let _ = AttachConsole(ATTACH_PARENT_PROCESS);
-    }
+    attach_parent_console();
 
     // Only run CLI mode if the user supplied args.
     #[cfg(feature = "gui")]
     {
         let gui_mode = std::env::args().len() == 1; // Just "arnis" with no args
         if gui_mode {
-            gui::run_gui();
+            #[cfg(target_os = "linux")]
+            let user_rendering_override = has_user_rendering_override();
+
+            if let Err(e) = gui::run_gui() {
+                #[cfg(target_os = "linux")]
+                {
+                    let already_retried = env::var_os(EGL_ZINK_RETRY_MARKER).is_some();
+                    if !already_retried && !user_rendering_override && is_egl_startup_failure(&e) {
+                        eprintln!(
+                            "{} Linux EGL initialization failed; retrying once with zink.",
+                            "Warning:".yellow().bold()
+                        );
+                        if let Err(retry_error) = retry_gui_with_zink() {
+                            eprintln!("{} {}", "Error:".red().bold(), retry_error);
+                        }
+                    }
+                }
+
+                eprintln!("{} {}", "Error:".red().bold(), e);
+                std::process::exit(1);
+            }
+
+            return;
         }
     }
 

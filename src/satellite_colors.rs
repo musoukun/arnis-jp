@@ -8,7 +8,7 @@ use crate::coordinate_system::cartesian::XZBBox;
 use crate::coordinate_system::geographic::LLBBox;
 use crate::osm_parser::ProcessedElement;
 use image::{DynamicImage, GenericImageView, RgbImage};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// ArcGIS World Imagery tile server (no API key required)
 const SATELLITE_TILE_URL: &str =
@@ -25,17 +25,17 @@ pub fn fetch_satellite_image(llbbox: &LLBBox) -> Result<DynamicImage, String> {
     let x_min = ((llbbox.min().lng() + 180.0) / 360.0 * n).floor() as u32;
     let x_max = ((llbbox.max().lng() + 180.0) / 360.0 * n).floor() as u32;
 
-    let y_min = ((1.0 - (llbbox.max().lat().to_radians().tan()
-        + 1.0 / llbbox.max().lat().to_radians().cos())
-    .ln()
-        / std::f64::consts::PI)
+    let y_min = ((1.0
+        - (llbbox.max().lat().to_radians().tan() + 1.0 / llbbox.max().lat().to_radians().cos())
+            .ln()
+            / std::f64::consts::PI)
         / 2.0
         * n)
         .floor() as u32;
-    let y_max = ((1.0 - (llbbox.min().lat().to_radians().tan()
-        + 1.0 / llbbox.min().lat().to_radians().cos())
-    .ln()
-        / std::f64::consts::PI)
+    let y_max = ((1.0
+        - (llbbox.min().lat().to_radians().tan() + 1.0 / llbbox.min().lat().to_radians().cos())
+            .ln()
+            / std::f64::consts::PI)
         / 2.0
         * n)
         .floor() as u32;
@@ -135,8 +135,12 @@ pub fn fetch_satellite_image(llbbox: &LLBBox) -> Result<DynamicImage, String> {
 
     println!(
         "Crop: x={}, y={}, w={}, h={} (from {}x{})",
-        crop_x, crop_y, crop_w, crop_h,
-        stitched.width(), stitched.height()
+        crop_x,
+        crop_y,
+        crop_w,
+        crop_h,
+        stitched.width(),
+        stitched.height()
     );
 
     let cropped = DynamicImage::ImageRgb8(stitched).crop_imm(
@@ -146,7 +150,11 @@ pub fn fetch_satellite_image(llbbox: &LLBBox) -> Result<DynamicImage, String> {
         crop_h.min(full_h as u32 - crop_y),
     );
 
-    println!("Cropped satellite image: {}x{}", cropped.width(), cropped.height());
+    println!(
+        "Cropped satellite image: {}x{}",
+        cropped.width(),
+        cropped.height()
+    );
 
     Ok(cropped)
 }
@@ -214,8 +222,8 @@ pub fn apply_satellite_colors(
     for element in elements.iter_mut() {
         match element {
             ProcessedElement::Way(ref mut way) => {
-                let is_building = way.tags.contains_key("building")
-                    || way.tags.contains_key("building:part");
+                let is_building =
+                    way.tags.contains_key("building") || way.tags.contains_key("building:part");
                 if !is_building || way.tags.contains_key("building:colour") {
                     continue;
                 }
@@ -234,7 +242,8 @@ pub fn apply_satellite_colors(
                 }
 
                 // Sample from all member way nodes
-                let all_nodes: Vec<_> = rel.members
+                let all_nodes: Vec<_> = rel
+                    .members
                     .iter()
                     .flat_map(|m| m.way.nodes.iter().cloned())
                     .collect();

@@ -29,5 +29,27 @@ export async function fetchLanguage(languageCode) {
     }
 
     const localization = await response.json();
-    return localization;
+    return { ...(await fetchJpExtras(languageCode)), ...localization };
+}
+
+/**
+ * arnis-jp: strings of the Japan extensions live in locales/jp/<lang>.json, outside the
+ * upstream locale files (which must all share en-US's key set). English is the base and the
+ * requested language, when it has a file there, overrides it. Never throws.
+ * @param {string} languageCode - The language code to fetch
+ * @returns {Promise<Object>} Extra localization strings (possibly empty)
+ */
+async function fetchJpExtras(languageCode) {
+    const load = async (code) => {
+        try {
+            const r = await fetch(`./locales/jp/${code}.json`);
+            if (invalidJSON(r)) return {};
+            return await r.json();
+        } catch (_) {
+            return {};
+        }
+    };
+    const base = await load('en');
+    const lang = languageCode.split('-')[0];
+    return lang === 'en' ? base : { ...base, ...(await load(lang)) };
 }
