@@ -11,7 +11,8 @@ use crate::world_editor::WorldEditor;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-const LAYER_HEIGHT_STEP: i32 = 6;
+// arnis-jp: 6 だと桁下が4mしかなく、日本の高架（建築限界4.5m、路面7〜8m）より低すぎるため 8 に上げる。
+const LAYER_HEIGHT_STEP: i32 = 8;
 const FLAT_TERRAIN_DIP_THRESHOLD: i32 = 4;
 const SHORT_BRIDGE_LENGTH_BLOCKS: usize = 30;
 const BRIDGE_NAME_FUSE_DISTANCE_BLOCKS: i32 = 200;
@@ -20,7 +21,7 @@ const DUAL_CARRIAGEWAY_HEADING_TOLERANCE_DEG: f32 = 20.0;
 /// Parallel decks whose edges come this close read as one structure, whatever their layers.
 const SIDE_DECK_EDGE_GAP_BLOCKS: f32 = 2.0;
 /// Deck Y above the ground where a road, path or track passes underneath.
-const ROAD_HEADROOM: i32 = 6;
+const ROAD_HEADROOM: i32 = 8; // arnis-jp: 6→8（桁下 6 ブロック）
 const PATH_HEADROOM: i32 = 5;
 // Clears the catenary wire, 6 above the track bed.
 const RAIL_HEADROOM: i32 = 8;
@@ -28,7 +29,7 @@ const RAIL_HEADROOM: i32 = 8;
 const RIVER_HEADROOM: i32 = 4;
 const STREAM_HEADROOM: i32 = 2;
 /// Deck Y above a lower bridge deck this one crosses.
-const STACKED_DECK_HEADROOM: i32 = 6;
+const STACKED_DECK_HEADROOM: i32 = 8; // arnis-jp: 6→8（下の橋との間も道路の建築限界を確保）
 /// Room an arch needs over flat ground for its curve to read.
 const ARCH_MIN_CLEARANCE: i32 = 8;
 /// Steepest climb (blocks per cell) a clearance may force from a deck end.
@@ -1984,8 +1985,12 @@ mod tests {
             &[(10, 48), (80, 48)],
         );
         let (structures, _) = structures_over(&[road, walk], |_| 0.0);
-        assert_eq!(ys(&structures, 1)[35], 12);
-        assert_eq!(ys(&structures, 2)[35], 12, "sidewalk rides the road deck");
+        assert_eq!(ys(&structures, 1)[35], 2 * LAYER_HEIGHT_STEP);
+        assert_eq!(
+            ys(&structures, 2)[35],
+            2 * LAYER_HEIGHT_STEP,
+            "sidewalk rides the road deck"
+        );
     }
 
     #[test]

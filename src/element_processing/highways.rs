@@ -1272,7 +1272,8 @@ fn generate_highways_internal(
     } else {
         layer_value_raw
     };
-    const LAYER_HEIGHT_STEP: i32 = 6;
+    // arnis-jp: bridges.rs の LAYER_HEIGHT_STEP と揃える（6→8）
+    const LAYER_HEIGHT_STEP: i32 = 8;
     let layer_boost = layer_value_effective * LAYER_HEIGHT_STEP;
 
     if let Some(highway_type) = element.tags().get("highway") {
