@@ -13,13 +13,15 @@
 //! ```
 
 use super::b3dm;
-use super::{HeightProvider, HeightResult};
+use super::{HeightPoint, HeightProvider, HeightResult};
 use serde_json::Value;
 
 const GRAPHQL_URL: &str = "https://api.plateauview.mlit.go.jp/datacatalog/graphql";
 
 /// Maximum distance (degrees) for centroid matching (~30 m).
+#[allow(dead_code)]
 const MATCH_THRESHOLD_DEG: f64 = 0.0003;
+#[allow(dead_code)]
 const MATCH_THRESHOLD_SQ: f64 = MATCH_THRESHOLD_DEG * MATCH_THRESHOLD_DEG;
 
 // ---------------------------------------------------------------------------
@@ -133,6 +135,28 @@ impl HeightProvider for PlateauProvider {
             ground_elv_m: None,
             source: "PLATEAU",
         })
+    }
+
+    fn points_in_bbox(
+        &self,
+        min_lat: f64,
+        min_lng: f64,
+        max_lat: f64,
+        max_lng: f64,
+    ) -> Vec<HeightPoint> {
+        self.buildings
+            .iter()
+            .filter(|b| {
+                b.lat >= min_lat && b.lat <= max_lat && b.lng >= min_lng && b.lng <= max_lng
+            })
+            .map(|b| HeightPoint {
+                lat: b.lat,
+                lng: b.lng,
+                height_m: b.height_m,
+                ground_elv_m: None,
+                source: "PLATEAU",
+            })
+            .collect()
     }
 
     fn name(&self) -> &'static str {

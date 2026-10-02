@@ -21,15 +21,17 @@
 //!
 //! Building height = `maxElv - grElv`.
 
-use super::{HeightProvider, HeightResult};
+use super::{HeightPoint, HeightProvider, HeightResult};
 use std::io::BufReader;
 use std::path::Path;
 
 /// Maximum distance (in degrees) between centroids to consider a match.
 /// ~30 m at mid-latitudes (≈ 0.00027°).
+#[allow(dead_code)]
 const MATCH_THRESHOLD_DEG: f64 = 0.0003;
 
 /// Squared threshold for fast distance comparison (avoids sqrt).
+#[allow(dead_code)]
 const MATCH_THRESHOLD_SQ: f64 = MATCH_THRESHOLD_DEG * MATCH_THRESHOLD_DEG;
 
 /// A single building parsed from the GML file.
@@ -104,6 +106,31 @@ impl HeightProvider for Gsi3dProvider {
             ground_elv_m: Some(bld.ground_elv),
             source: "GSI-3D",
         })
+    }
+
+    fn points_in_bbox(
+        &self,
+        min_lat: f64,
+        min_lng: f64,
+        max_lat: f64,
+        max_lng: f64,
+    ) -> Vec<HeightPoint> {
+        self.buildings
+            .iter()
+            .filter(|b| {
+                b.centroid_lat >= min_lat
+                    && b.centroid_lat <= max_lat
+                    && b.centroid_lng >= min_lng
+                    && b.centroid_lng <= max_lng
+            })
+            .map(|b| HeightPoint {
+                lat: b.centroid_lat,
+                lng: b.centroid_lng,
+                height_m: b.height_m,
+                ground_elv_m: Some(b.ground_elv),
+                source: "GSI-3D",
+            })
+            .collect()
     }
 
     fn name(&self) -> &'static str {
