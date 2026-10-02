@@ -17,7 +17,7 @@ use crate::osm_parser::{OsmData, ProcessedElement};
 /// Merge GSI building vector tile data into raw OSM data.
 ///
 /// No-op when `args.gsi` is false.
-pub fn merge_gsi_buildings_if_enabled(args: &Args, raw_data: &mut OsmData) {
+pub fn merge_gsi_buildings_if_enabled(args: &Args, bbox: LLBBox, raw_data: &mut OsmData) {
     if !args.gsi {
         return;
     }
@@ -25,7 +25,7 @@ pub fn merge_gsi_buildings_if_enabled(args: &Args, raw_data: &mut OsmData) {
         "{} Fetching GSI building data...",
         "[GSI]".bright_white().bold()
     );
-    match crate::gsi_data::fetch_gsi_buildings(args.bbox) {
+    match crate::gsi_data::fetch_gsi_buildings(bbox) {
         Ok(gsi_data) => {
             raw_data.merge(gsi_data);
         }
@@ -44,13 +44,14 @@ pub fn merge_gsi_buildings_if_enabled(args: &Args, raw_data: &mut OsmData) {
 /// No-op when `args.satellite` is false.
 pub fn apply_satellite_colors_if_enabled(
     args: &Args,
+    bbox: &LLBBox,
     parsed_elements: &mut Vec<ProcessedElement>,
     xzbbox: &XZBBox,
 ) {
     if !args.satellite {
         return;
     }
-    match crate::satellite_colors::apply_satellite_colors(parsed_elements, xzbbox, &args.bbox) {
+    match crate::satellite_colors::apply_satellite_colors(parsed_elements, xzbbox, bbox) {
         Ok(count) => println!("Applied satellite colors to {count} buildings"),
         Err(e) => eprintln!(
             "{} Failed to apply satellite colors: {}",
@@ -67,7 +68,7 @@ pub fn apply_satellite_colors_if_enabled(
 /// - PLATEAU 3D Tiles (`--plateau`)
 ///
 /// No-op when neither flag is set.
-pub fn add_jp_height_providers(args: &Args, height_resolver: &mut HeightResolver) {
+pub fn add_jp_height_providers(args: &Args, bbox: &LLBBox, height_resolver: &mut HeightResolver) {
     // GSI 3D (highest priority)
     if let Some(ref gml_path) = args.gsi_3d {
         println!(
@@ -97,10 +98,10 @@ pub fn add_jp_height_providers(args: &Args, height_resolver: &mut HeightResolver
             "[PLATEAU]".bright_white().bold()
         );
         match crate::building_height::plateau::PlateauProvider::from_bbox(
-            args.bbox.min().lat(),
-            args.bbox.min().lng(),
-            args.bbox.max().lat(),
-            args.bbox.max().lng(),
+            bbox.min().lat(),
+            bbox.min().lng(),
+            bbox.max().lat(),
+            bbox.max().lng(),
         ) {
             Ok(provider) => {
                 height_resolver.add_provider(Box::new(provider));
@@ -114,4 +115,34 @@ pub fn add_jp_height_providers(args: &Args, height_resolver: &mut HeightResolver
             }
         }
     }
+}
+
+/// Build the arnis-jp generation bundle (export collectors, coordinate parameters for
+/// world_mapping.json, external height providers) for one run.
+///
+/// Both the CLI and the GUI call this once and hand the result to
+/// `GenerationOptions::jp`.
+pub fn build_jp_generation(
+    args: &Args,
+    bbox: &LLBBox,
+) -> Result<std::sync::Arc<crate::jp_export::JpGeneration>, String> {
+    // The unrotated transform of the run; world_mapping.json and the height resolver
+    // both describe the lat/lng <-> XZ relation before any rotation.
+    let (transformer, _) = crate::projection::ProjectionSpec::from_args(args).transformer(bbox)?;
+
+    let mut height_resolver = HeightResolver::new(
+        transformer.min_lat(),
+        transformer.min_lng(),
+        transformer.len_lat(),
+        transformer.len_lng(),
+        transformer.scale_factor_x(),
+        transformer.scale_factor_z(),
+    );
+    add_jp_height_providers(args, bbox, &mut height_resolver);
+
+    Ok(std::sync::Arc::new(crate::jp_export::JpGeneration {
+        export: crate::jp_export::JpExportContext::new(),
+        export_opts: crate::jp_export::JpExportOptions::from_transformer(&transformer),
+        height_resolver,
+    }))
 }

@@ -3,8 +3,9 @@ use crate::block_definitions::*;
 use crate::bresenham::bresenham_line;
 use crate::coordinate_system::cartesian::XZPoint;
 use crate::deterministic_rng::element_rng;
-use crate::floodfill::flood_fill_area; // Needed for inline amenity flood fills
-use crate::floodfill_cache::FloodFillCache;
+use crate::element_processing::get_nearest_road_block;
+use crate::element_processing::surfaces::{get_blocks_for_surface, semirandom_surface};
+use crate::floodfill_cache::{FloodFillCache, RoadMaskBitmap};
 use crate::osm_parser::ProcessedElement;
 use crate::world_editor::WorldEditor;
 use fastnbt::Value;
@@ -19,6 +20,7 @@ pub fn generate_amenities(
     element: &ProcessedElement,
     args: &Args,
     flood_fill_cache: &FloodFillCache,
+    road_mask: &RoadMaskBitmap,
 ) {
     // Skip if 'layer' or 'level' is negative in the tags
     if let Some(layer) = element.tags().get("layer") {
@@ -50,7 +52,8 @@ pub fn generate_amenities(
                 }
 
                 if let Some(pt) = first_node {
-                    let mut rng = rand::rng();
+                    let mut rng =
+                        crate::deterministic_rng::element_rng_salted(element.id(), 0x5EC1);
                     let loot_pool = build_recycling_loot_pool(element.tags());
                     let items = build_recycling_items(&loot_pool, &mut rng);
 
@@ -67,17 +70,21 @@ pub fn generate_amenities(
                         items,
                     );
 
-                    if let Some(category) = single_loot_category(&loot_pool) {
-                        if let Some(display_item) =
-                            build_display_item_for_category(category, &mut rng)
-                        {
-                            place_item_frame_on_random_side(
-                                editor,
-                                pt.x,
-                                absolute_y,
-                                pt.z,
-                                display_item,
-                            );
+                    let decals_placed =
+                        place_furniture_decals(editor, element.tags(), pt.x, absolute_y, pt.z);
+                    if !decals_placed {
+                        if let Some(category) = single_loot_category(&loot_pool) {
+                            if let Some(display_item) =
+                                build_display_item_for_category(category, &mut rng)
+                            {
+                                place_item_frame_on_random_side(
+                                    editor,
+                                    pt.x,
+                                    absolute_y,
+                                    pt.z,
+                                    display_item,
+                                );
+                            }
                         }
                     }
                 }
@@ -86,20 +93,31 @@ pub fn generate_amenities(
                 // Place a cauldron for waste disposal or waste basket
                 if let Some(pt) = first_node {
                     editor.set_block(CAULDRON, pt.x, 1, pt.z, None, None);
+                    let abs_y = editor.get_absolute_y(pt.x, 1, pt.z);
+                    place_furniture_decals(editor, element.tags(), pt.x, abs_y, pt.z);
                 }
             }
             "vending_machine" | "atm" => {
                 if let Some(pt) = first_node {
                     editor.set_block(IRON_BLOCK, pt.x, 1, pt.z, None, None);
                     editor.set_block(IRON_BLOCK, pt.x, 2, pt.z, None, None);
+                    // Front graphic on the upper block, all four sides.
+                    let abs_y = editor.get_absolute_y(pt.x, 2, pt.z);
+                    place_furniture_decals(editor, element.tags(), pt.x, abs_y, pt.z);
                 }
             }
             "bicycle_parking" => {
-                let ground_block: Block = OAK_PLANKS;
+                // Honor an explicit surface=* tag; default to a wooden deck.
+                let ground_block: Block = element
+                    .tags()
+                    .get("surface")
+                    .and_then(|s| get_blocks_for_surface(s))
+                    .map(|blocks| blocks[0])
+                    .unwrap_or(OAK_PLANKS);
                 let roof_block: Block = STONE_BLOCK_SLAB;
 
                 // Use pre-computed flood fill from cache
-                let floor_area: Vec<(i32, i32)> =
+                let floor_area =
                     flood_fill_cache.get_or_compute_element(element, args.timeout.as_ref());
 
                 if floor_area.is_empty() {
@@ -132,25 +150,69 @@ pub fn generate_amenities(
             "bench" => {
                 // Place a bench
                 if let Some(pt) = first_node {
-                    // Use deterministic RNG for consistent bench orientation across region boundaries
                     let mut rng = element_rng(element.id());
-                    // 50% chance to 90 degrees rotate the bench
-                    if rng.random_bool(0.5) {
-                        editor.set_block(SMOOTH_STONE, pt.x, 1, pt.z, None, None);
-                        editor.set_block(OAK_LOG, pt.x + 1, 1, pt.z, None, None);
-                        editor.set_block(OAK_LOG, pt.x - 1, 1, pt.z, None, None);
+                    let road_pos = get_nearest_road_block(pt.x, pt.z, 4, road_mask);
+
+                    let use_east_west = if let Some((rx, rz)) = road_pos {
+                        let dx = (rx - pt.x).abs();
+                        let dz = (rz - pt.z).abs();
+                        dz >= dx
                     } else {
-                        editor.set_block(SMOOTH_STONE, pt.x, 1, pt.z, None, None);
-                        editor.set_block(OAK_LOG, pt.x, 1, pt.z + 1, None, None);
-                        editor.set_block(OAK_LOG, pt.x, 1, pt.z - 1, None, None);
-                    }
+                        rng.random_bool(0.5)
+                    };
+
+                    // facing_a and facing_b must face AWAY from the center (pt.x, pt.z)
+                    let (facing_a, facing_b, dx, dz) = if use_east_west {
+                        // Bench stretches along X axis.
+                        // Stair A is at -1 (West), so it faces West.
+                        // Stair B is at +1 (East), so it faces East.
+                        (StairFacing::West, StairFacing::East, 1, 0)
+                    } else {
+                        // Bench stretches along Z axis.
+                        // Stair A is at -1 (North), so it faces North.
+                        // Stair B is at +1 (South), so it faces South.
+                        (StairFacing::North, StairFacing::South, 0, 1)
+                    };
+
+                    let abs_y = editor.get_absolute_y(pt.x, 1, pt.z);
+                    let bench_blacklist = [OAK_LOG, SPRUCE_LOG];
+                    //place bench
+                    let stair_a = top_stair(create_stair_with_properties(
+                        OAK_STAIRS,
+                        facing_a,
+                        StairShape::Straight,
+                    ));
+                    editor.set_block_with_properties_absolute(
+                        stair_a,
+                        pt.x - dx,
+                        abs_y,
+                        pt.z - dz,
+                        None,
+                        Some(&bench_blacklist),
+                    );
+
+                    editor.set_block(OAK_SLAB_TOP, pt.x, 1, pt.z, None, Some(&bench_blacklist));
+
+                    let stair_b = top_stair(create_stair_with_properties(
+                        OAK_STAIRS,
+                        facing_b,
+                        StairShape::Straight,
+                    ));
+                    editor.set_block_with_properties_absolute(
+                        stair_b,
+                        pt.x + dx,
+                        abs_y,
+                        pt.z + dz,
+                        None,
+                        Some(&bench_blacklist),
+                    );
                 }
             }
             "shelter" => {
                 let roof_block: Block = STONE_BRICK_SLAB;
 
                 // Use pre-computed flood fill from cache
-                let roof_area: Vec<(i32, i32)> =
+                let roof_area =
                     flood_fill_cache.get_or_compute_element(element, args.timeout.as_ref());
 
                 // Place fences and roof slabs at each corner node directly
@@ -169,139 +231,228 @@ pub fn generate_amenities(
                     editor.set_block(roof_block, *x, 5, *z, None, None);
                 }
             }
-            "parking" | "fountain" => {
-                // Process parking or fountain areas
-                let mut previous_node: Option<XZPoint> = None;
-                let mut corner_addup: (i32, i32, i32) = (0, 0, 0);
-                let mut current_amenity: Vec<(i32, i32)> = vec![];
+            "fountain" => {
+                generate_fountain(editor, element, args, flood_fill_cache);
+            }
+            "drinking_water" => {
+                if let Some(pt) = first_node {
+                    editor.set_block(COBBLESTONE_WALL, pt.x, 1, pt.z, None, None);
 
-                let block_type = match amenity_type.as_str() {
-                    "fountain" => WATER,
-                    "parking" => GRAY_CONCRETE,
-                    _ => GRAY_CONCRETE,
-                };
+                    let absolute_y = editor.get_absolute_y(pt.x, 1, pt.z);
+                    let lever_props = HashMap::from([
+                        ("facing".to_string(), Value::String("west".to_string())),
+                        ("powered".to_string(), Value::String("true".to_string())),
+                    ]);
+                    editor.set_block_with_properties_absolute(
+                        BlockWithProperties::new(LEVER, Some(Value::Compound(lever_props))),
+                        pt.x - 1,
+                        absolute_y + 1,
+                        pt.z,
+                        None,
+                        None,
+                    );
+
+                    let spout_props =
+                        HashMap::from([("west".to_string(), Value::String("low".to_string()))]);
+                    editor.set_block_with_properties_absolute(
+                        BlockWithProperties::new(
+                            COBBLESTONE_WALL,
+                            Some(Value::Compound(spout_props)),
+                        ),
+                        pt.x,
+                        absolute_y + 1,
+                        pt.z,
+                        None,
+                        None,
+                    );
+
+                    let cauldron_props =
+                        HashMap::from([("level".to_string(), Value::String("3".to_string()))]);
+                    editor.set_block_with_properties_absolute(
+                        BlockWithProperties::new(
+                            WATER_CAULDRON,
+                            Some(Value::Compound(cauldron_props)),
+                        ),
+                        pt.x - 1,
+                        absolute_y,
+                        pt.z,
+                        None,
+                        None,
+                    );
+                }
+            }
+            "parking" => {
+                // Process parking areas
+                let mut previous_node: Option<XZPoint> = None;
+
+                // Speckled asphalt mix like roads; honor an explicit surface=* tag.
+                let mut block_types: &[Block] = &[GRAY_CONCRETE_POWDER, CYAN_TERRACOTTA];
+                if let Some(blocks) = element
+                    .tags()
+                    .get("surface")
+                    .and_then(|s| get_blocks_for_surface(s))
+                {
+                    block_types = blocks;
+                }
 
                 for node in element.nodes() {
                     let pt: XZPoint = node.xz();
 
                     if let Some(prev) = previous_node {
-                        // Create borders for fountain or parking area
+                        // Create borders for parking area
                         let bresenham_points: Vec<(i32, i32, i32)> =
                             bresenham_line(prev.x, 0, prev.z, pt.x, 0, pt.z);
                         for (bx, _, bz) in bresenham_points {
-                            editor.set_block(block_type, bx, 0, bz, Some(&[BLACK_CONCRETE]), None);
-
-                            // Decorative border around fountains
-                            if amenity_type == "fountain" {
-                                for dx in [-1, 0, 1].iter() {
-                                    for dz in [-1, 0, 1].iter() {
-                                        if (*dx, *dz) != (0, 0) {
-                                            editor.set_block(
-                                                LIGHT_GRAY_CONCRETE,
-                                                bx + dx,
-                                                0,
-                                                bz + dz,
-                                                None,
-                                                None,
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-
-                            current_amenity.push((node.x, node.z));
-                            corner_addup.0 += node.x;
-                            corner_addup.1 += node.z;
-                            corner_addup.2 += 1;
+                            editor.set_block(
+                                semirandom_surface(bx, bz, block_types),
+                                bx,
+                                0,
+                                bz,
+                                Some(&[BLACK_CONCRETE, GRAY_CONCRETE_POWDER, CYAN_TERRACOTTA]),
+                                None,
+                            );
                         }
                     }
                     previous_node = Some(pt);
                 }
 
-                // Flood-fill the interior area for parking or fountains
-                if corner_addup.2 > 0 {
-                    let polygon_coords: Vec<(i32, i32)> = current_amenity.to_vec();
-                    let flood_area: Vec<(i32, i32)> =
-                        flood_fill_area(&polygon_coords, args.timeout.as_ref());
+                // Flood-fill the interior area for parking
+                let flood_area =
+                    flood_fill_cache.get_or_compute_element(element, args.timeout.as_ref());
 
-                    for (x, z) in flood_area {
-                        editor.set_block(
-                            block_type,
-                            x,
-                            0,
-                            z,
-                            Some(&[BLACK_CONCRETE, GRAY_CONCRETE]),
-                            None,
-                        );
+                for &(x, z) in flood_area.iter() {
+                    if editor.nested_area_owns(x, z) {
+                        continue;
+                    }
+                    editor.set_block(
+                        semirandom_surface(x, z, block_types),
+                        x,
+                        0,
+                        z,
+                        Some(&[
+                            BLACK_CONCRETE,
+                            GRAY_CONCRETE_POWDER,
+                            CYAN_TERRACOTTA,
+                            GRAY_CONCRETE,
+                        ]),
+                        None,
+                    );
 
-                        // Enhanced parking space markings
-                        if amenity_type == "parking" {
-                            // Create defined parking spaces with realistic layout
-                            let space_width = 4; // Width of each parking space
-                            let space_length = 6; // Length of each parking space
-                            let lane_width = 5; // Width of driving lanes
+                    // Enhanced parking space markings
+                    if amenity_type == "parking" {
+                        // Create defined parking spaces with realistic layout
+                        let space_width = 4; // Width of each parking space
+                        let space_length = 8; // Length of each parking space, fits the bundled cars
+                        let lane_width = 5; // Width of driving lanes
 
-                            // Calculate which "zone" this coordinate falls into
-                            let zone_x = x / space_width;
-                            let zone_z = z / (space_length + lane_width);
-                            let local_x = x % space_width;
-                            let local_z = z % (space_length + lane_width);
+                        // Calculate which "zone" this coordinate falls into
+                        let zone_x = x / space_width;
+                        let zone_z = z / (space_length + lane_width);
+                        let local_x = x % space_width;
+                        let local_z = z % (space_length + lane_width);
 
-                            // Create parking space boundaries (only within parking areas, not in driving lanes)
-                            if local_z < space_length {
-                                // We're in a parking space area, not in the driving lane
-                                if local_x == 0 {
-                                    // Vertical parking space lines (only on the left edge)
-                                    editor.set_block(
-                                        LIGHT_GRAY_CONCRETE,
-                                        x,
-                                        0,
-                                        z,
-                                        Some(&[BLACK_CONCRETE, GRAY_CONCRETE]),
-                                        None,
-                                    );
-                                } else if local_z == 0 {
-                                    // Horizontal parking space lines (only on the top edge)
-                                    editor.set_block(
-                                        LIGHT_GRAY_CONCRETE,
-                                        x,
-                                        0,
-                                        z,
-                                        Some(&[BLACK_CONCRETE, GRAY_CONCRETE]),
-                                        None,
-                                    );
-                                }
-                            } else if local_z == space_length {
-                                // Bottom edge of parking spaces (border with driving lane)
+                        // Create parking space boundaries (only within parking areas, not in driving lanes)
+                        if local_z < space_length {
+                            // We're in a parking space area, not in the driving lane
+                            if local_x == 0 {
+                                // Vertical parking space lines (only on the left edge)
                                 editor.set_block(
-                                    LIGHT_GRAY_CONCRETE,
+                                    WHITE_CONCRETE,
                                     x,
                                     0,
                                     z,
-                                    Some(&[BLACK_CONCRETE, GRAY_CONCRETE]),
+                                    Some(&[
+                                        BLACK_CONCRETE,
+                                        GRAY_CONCRETE_POWDER,
+                                        CYAN_TERRACOTTA,
+                                        GRAY_CONCRETE,
+                                    ]),
                                     None,
                                 );
-                            } else if local_z > space_length && local_z < space_length + lane_width
-                            {
-                                // Driving lane - use darker concrete
+                            } else if local_z == 0 {
+                                // Horizontal parking space lines (only on the top edge)
                                 editor.set_block(
-                                    BLACK_CONCRETE,
+                                    WHITE_CONCRETE,
                                     x,
                                     0,
                                     z,
-                                    Some(&[GRAY_CONCRETE]),
+                                    Some(&[
+                                        BLACK_CONCRETE,
+                                        GRAY_CONCRETE_POWDER,
+                                        CYAN_TERRACOTTA,
+                                        GRAY_CONCRETE,
+                                    ]),
                                     None,
                                 );
                             }
+                        } else if local_z == space_length {
+                            // Bottom edge of parking spaces (border with driving lane)
+                            editor.set_block(
+                                WHITE_CONCRETE,
+                                x,
+                                0,
+                                z,
+                                Some(&[
+                                    BLACK_CONCRETE,
+                                    GRAY_CONCRETE_POWDER,
+                                    CYAN_TERRACOTTA,
+                                    GRAY_CONCRETE,
+                                ]),
+                                None,
+                            );
+                        }
+                        // Driving lanes keep the base asphalt mix; the white edge
+                        // line above already separates them from the spaces.
 
-                            // Add light posts at parking space outline corners
-                            if local_x == 0 && local_z == 0 && zone_x % 3 == 0 && zone_z % 2 == 0 {
-                                // Light posts at regular intervals on parking space corners
-                                editor.set_block(COBBLESTONE_WALL, x, 1, z, None, None);
-                                for dy in 2..=4 {
-                                    editor.set_block(OAK_FENCE, x, dy, z, None, None);
+                        // Add light posts at parking space outline corners
+                        if local_x == 0 && local_z == 0 && zone_x % 3 == 0 && zone_z % 2 == 0 {
+                            // Slim metal lamp with a cool-white head.
+                            editor.set_block(SMOOTH_STONE, x, 1, z, None, None);
+                            editor.set_block(ANDESITE_WALL, x, 2, z, None, None);
+                            for dy in 3..=5 {
+                                editor.set_block(IRON_BARS, x, dy, z, None, None);
+                            }
+                            editor.set_block(SEA_LANTERN, x, 6, z, None, None);
+                            editor.set_block(SMOOTH_STONE_SLAB, x, 7, z, None, None);
+                        }
+                    }
+                }
+
+                // Park cars on some fully-inside spaces, leaving plenty empty.
+                if amenity_type == "parking" {
+                    let space_width = 4;
+                    let space_length = 8;
+                    let period_z = space_length + 5;
+                    // Sorted copy + binary search keeps this light on huge lots.
+                    let mut lot: Vec<(i32, i32)> = flood_area
+                        .iter()
+                        .copied()
+                        .filter(|&(x, z)| !editor.nested_area_owns(x, z))
+                        .collect();
+                    lot.sort_unstable();
+                    let in_lot = |x: i32, z: i32| lot.binary_search(&(x, z)).is_ok();
+                    if let (Some(&min_x), Some(&max_x), Some(&min_z), Some(&max_z)) = (
+                        flood_area.iter().map(|(x, _)| x).min(),
+                        flood_area.iter().map(|(x, _)| x).max(),
+                        flood_area.iter().map(|(_, z)| z).min(),
+                        flood_area.iter().map(|(_, z)| z).max(),
+                    ) {
+                        // Truncating division to match the striping grid above.
+                        for zx in (min_x / space_width)..=(max_x / space_width) {
+                            for zz in (min_z / period_z)..=(max_z / period_z) {
+                                let x0 = zx * space_width;
+                                let z0 = zz * period_z;
+                                let inside = (0..=space_width).all(|dx| {
+                                    (0..=space_length).all(|dz| in_lot(x0 + dx, z0 + dz))
+                                });
+                                if inside {
+                                    crate::structures::car::maybe_place_car(
+                                        editor,
+                                        x0 + 2,
+                                        z0 + 4,
+                                        0,
+                                    );
                                 }
-                                editor.set_block(GLOWSTONE, x, 5, z, None, None);
                             }
                         }
                     }
@@ -310,6 +461,47 @@ pub fn generate_amenities(
             _ => {}
         }
     }
+}
+
+/// Stamp a bundled fountain at the element; footprint size picks the variant
+/// (node/small way gets a small fountain, a large polygon gets the big one).
+fn generate_fountain(
+    editor: &mut WorldEditor,
+    element: &ProcessedElement,
+    args: &Args,
+    flood_fill_cache: &FloodFillCache,
+) {
+    // ── Node fountain (single point) ───────────────────────────────
+    let nodes: Vec<_> = element.nodes().collect();
+    if nodes.len() < 3 {
+        if let Some(node) = nodes.first() {
+            crate::structures::fountain::place(editor, node.x, node.z, 0);
+        }
+        return;
+    }
+
+    // ── Way fountain (polygon) ─────────────────────────────────────
+    let floor_area = flood_fill_cache.get_or_compute_element(element, args.timeout.as_ref());
+    if floor_area.is_empty() {
+        return;
+    }
+    let (sum_x, sum_z) = floor_area.iter().fold((0i64, 0i64), |(sx, sz), &(x, z)| {
+        (sx + x as i64, sz + z as i64)
+    });
+    let n = floor_area.len();
+    let cx0 = (sum_x / n as i64) as i32;
+    let cz0 = (sum_z / n as i64) as i32;
+    // Snap to the nearest filled cell so concave shapes still place inside.
+    let (cx, cz) = floor_area
+        .iter()
+        .copied()
+        .min_by_key(|&(x, z)| {
+            let (dx, dz) = ((x - cx0) as i64, (z - cz0) as i64);
+            dx * dx + dz * dz
+        })
+        .unwrap_or((cx0, cz0));
+    // Footprint size decides small (1-3) vs large (fountain 4).
+    crate::structures::fountain::place(editor, cx, cz, n);
 }
 
 #[derive(Clone, Copy)]
@@ -462,6 +654,27 @@ fn build_display_item_for_category(
     }
 }
 
+/// Places the furniture pictogram (recycling, vending, ATM) on all four sides of a block.
+/// Returns false when decals are off or the icon is not registered.
+fn place_furniture_decals(
+    editor: &mut WorldEditor,
+    tags: &HashMap<String, String>,
+    x: i32,
+    abs_y: i32,
+    z: i32,
+) -> bool {
+    let Some(key) = crate::element_processing::signage::furniture_pictogram(tags) else {
+        return false;
+    };
+    if !editor.signage().is_some_and(|s| s.registry.contains(&key)) {
+        return false;
+    }
+    for facing in [2i8, 3, 4, 5] {
+        editor.place_decal(x, abs_y, z, facing, &key);
+    }
+    true
+}
+
 fn place_item_frame_on_random_side(
     editor: &mut WorldEditor,
     x: i32,
@@ -469,7 +682,7 @@ fn place_item_frame_on_random_side(
     z: i32,
     item: HashMap<String, Value>,
 ) {
-    let mut rng = rand::rng();
+    let mut rng = crate::deterministic_rng::coord_rng(x, z, 0xF7A3E);
     let mut directions = [
         ((0, 0, -1), 2), // North
         ((0, 0, 1), 3),  // South

@@ -8,7 +8,7 @@ use crate::coordinate_system::cartesian::XZBBox;
 use crate::coordinate_system::geographic::LLBBox;
 use crate::osm_parser::ProcessedElement;
 use image::{DynamicImage, GenericImageView, RgbImage};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// ArcGIS World Imagery tile server (no API key required)
 const SATELLITE_TILE_URL: &str =

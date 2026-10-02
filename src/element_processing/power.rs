@@ -7,11 +7,49 @@
 
 use crate::block_definitions::*;
 use crate::bresenham::bresenham_line;
+use crate::floodfill_cache::{CoordinateBitmap, FloodFillCache};
 use crate::osm_parser::{ProcessedElement, ProcessedNode, ProcessedWay};
 use crate::world_editor::WorldEditor;
+use std::collections::HashMap;
+use std::time::Duration;
+
+/// True for wind generators the freestanding turbine schematic misrepresents:
+/// mounted on a structure or micro scale, like the rooftop units on the Eiffel Tower.
+fn is_mounted_or_micro_turbine(tags: &HashMap<String, String>) -> bool {
+    let positive_number = |key: &str| {
+        tags.get(key)
+            .and_then(|v| v.trim_end_matches('m').trim().parse::<f64>().ok())
+            .is_some_and(|v| v > 0.0)
+    };
+    if positive_number("min_height") || positive_number("level") {
+        return true;
+    }
+    if tags
+        .get("location")
+        .is_some_and(|l| l == "roof" || l == "rooftop")
+    {
+        return true;
+    }
+    // Vertical axis turbines are small urban units, not the classic three blade tower
+    if tags
+        .get("generator:type")
+        .is_some_and(|t| t == "vertical_axis")
+    {
+        return true;
+    }
+    tags.get("rotor:diameter")
+        .and_then(|v| v.trim_end_matches('m').trim().parse::<f64>().ok())
+        .is_some_and(|d| d < 10.0)
+}
 
 /// Generate power infrastructure from way elements (power lines)
-pub fn generate_power(editor: &mut WorldEditor, element: &ProcessedElement) {
+pub fn generate_power(
+    editor: &mut WorldEditor,
+    element: &ProcessedElement,
+    building_footprints: &CoordinateBitmap,
+    flood_fill_cache: &FloodFillCache,
+    timeout: Option<&Duration>,
+) {
     // Skip if 'layer' or 'level' is negative in the tags
     if let Some(layer) = element.tags().get("layer") {
         if layer.parse::<i32>().unwrap_or(0) < 0 {
@@ -52,7 +90,96 @@ pub fn generate_power(editor: &mut WorldEditor, element: &ProcessedElement) {
             }
             "tower" => generate_power_tower(editor, element),
             "pole" => generate_power_pole(editor, element),
+            "generator" => generate_generator(
+                editor,
+                element,
+                building_footprints,
+                flood_fill_cache,
+                timeout,
+            ),
             _ => {}
+        }
+    }
+}
+
+/// Place a wind turbine or solar farm depending on generator:source.
+fn generate_generator(
+    editor: &mut WorldEditor,
+    element: &ProcessedElement,
+    building_footprints: &CoordinateBitmap,
+    flood_fill_cache: &FloodFillCache,
+    timeout: Option<&Duration>,
+) {
+    match element.tags().get("generator:source").map(|s| s.as_str()) {
+        Some("wind") => {
+            if is_mounted_or_micro_turbine(element.tags()) {
+                return;
+            }
+            let (mut sx, mut sz, mut n) = (0i64, 0i64, 0i64);
+            for node in element.nodes() {
+                sx += node.x as i64;
+                sz += node.z as i64;
+                n += 1;
+            }
+            if n == 0 {
+                return;
+            }
+            crate::structures::windturbine::place(editor, (sx / n) as i32, (sz / n) as i32);
+        }
+        Some("solar") => {
+            if let ProcessedElement::Way(way) = element {
+                generate_solar_farm(editor, way, building_footprints, flood_fill_cache, timeout);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Minimum filled cells before a solar way is rendered as a panel farm.
+const SOLAR_FARM_MIN_CELLS: usize = 60;
+
+/// Solar farm: panel rows along the longer axis with gravel paths; rooftop cells are skipped.
+fn generate_solar_farm(
+    editor: &mut WorldEditor,
+    way: &ProcessedWay,
+    building_footprints: &CoordinateBitmap,
+    flood_fill_cache: &FloodFillCache,
+    timeout: Option<&Duration>,
+) {
+    // Roof-mounted arrays are the building module's job.
+    if way.tags.get("location").map(String::as_str) == Some("roof") {
+        return;
+    }
+    let cells = flood_fill_cache.get_or_compute(way, timeout);
+    if cells.len() < SOLAR_FARM_MIN_CELLS {
+        return;
+    }
+
+    let (min_x, max_x) = cells
+        .iter()
+        .fold((i32::MAX, i32::MIN), |(lo, hi), &(x, _)| {
+            (lo.min(x), hi.max(x))
+        });
+    let (min_z, max_z) = cells
+        .iter()
+        .fold((i32::MAX, i32::MIN), |(lo, hi), &(_, z)| {
+            (lo.min(z), hi.max(z))
+        });
+    let rows_along_x = (max_x - min_x) >= (max_z - min_z);
+
+    for &(x, z) in cells.iter() {
+        if building_footprints.contains(x, z) || editor.is_lc_water(x, z) {
+            continue;
+        }
+        let lane = if rows_along_x {
+            (z - min_z).rem_euclid(4)
+        } else {
+            (x - min_x).rem_euclid(4)
+        };
+        if lane < 3 {
+            editor.set_block(DAYLIGHT_DETECTOR, x, 1, z, None, None);
+        } else {
+            editor.set_block(GRAVEL, x, 0, z, None, None);
         }
     }
 }
@@ -89,6 +216,12 @@ pub fn generate_power_nodes(editor: &mut WorldEditor, node: &ProcessedNode) {
         match power_type.as_str() {
             "tower" => generate_power_tower_from_node(editor, node),
             "pole" => generate_power_pole_from_node(editor, node),
+            "generator"
+                if node.tags.get("generator:source").map(|s| s.as_str()) == Some("wind")
+                    && !is_mounted_or_micro_turbine(&node.tags) =>
+            {
+                crate::structures::windturbine::place(editor, node.x, node.z);
+            }
             _ => {}
         }
     }
@@ -326,60 +459,95 @@ fn generate_power_line(editor: &mut WorldEditor, way: &ProcessedWay) {
         })
         .unwrap_or(15);
 
-    // Process consecutive node pairs
     for i in 1..way.nodes.len() {
         let start = &way.nodes[i - 1];
         let end = &way.nodes[i];
 
-        // Calculate distance between nodes
         let dx = (end.x - start.x) as f64;
         let dz = (end.z - start.z) as f64;
         let distance = (dx * dx + dz * dz).sqrt();
-
-        // Calculate sag based on span length (longer spans = more sag)
         let max_sag = (distance / 15.0).clamp(1.0, 6.0) as i32;
-
-        // Determine chain orientation based on line direction
-        // If the line runs more along X-axis, use CHAIN_X; if more along Z-axis, use CHAIN_Z
         let chain_block = if dx.abs() >= dz.abs() {
-            CHAIN_X // Line runs primarily along X-axis
+            CHAIN_X
         } else {
-            CHAIN_Z // Line runs primarily along Z-axis
+            CHAIN_Z
         };
 
-        // Generate points along the line using Bresenham
+        // Absolute wire height at each pole, so the span hangs straight between
+        // them instead of following the ground under it.
+        let start_y = editor.get_ground_level(start.x, start.z) + base_height;
+        let end_y = editor.get_ground_level(end.x, end.z) + base_height;
+
+        // Perpendicular offsets of the 3-phase bundle (high voltage only).
+        let three_phase = base_height >= 18;
+        let offsets: [(i32, i32); 2] = if dx.abs() >= dz.abs() {
+            [(0, 1), (0, -1)]
+        } else {
+            [(1, 0), (-1, 0)]
+        };
+
         let line_points = bresenham_line(start.x, 0, start.z, end.x, 0, end.z);
-
+        let denom = (line_points.len().saturating_sub(1)).max(1) as f64;
         for (idx, (lx, _, lz)) in line_points.iter().enumerate() {
-            // Calculate position along the span (0.0 to 1.0)
-            // Use len-1 as denominator so last point reaches t=1.0
-            let denom = (line_points.len().saturating_sub(1)).max(1) as f64;
             let t = idx as f64 / denom;
-
-            // Catenary approximation: sag is maximum at center, zero at ends
-            // Using parabola: sag = 4 * max_sag * t * (1 - t)
+            // Parabolic sag off the straight line between the two poles.
             let sag = (4.0 * max_sag as f64 * t * (1.0 - t)) as i32;
-
-            // Ensure wire doesn't go underground (minimum height of 3 blocks above ground)
-            let wire_y = (base_height - sag).max(3);
-
-            // Place the wire block (chain aligned with line direction)
-            editor.set_block(chain_block, *lx, wire_y, *lz, None, None);
-
-            // For high voltage lines, add parallel wires offset to sides
-            if base_height >= 18 {
-                // Three-phase power: 3 parallel lines
-                // Offset perpendicular to the line direction
-                if dx.abs() >= dz.abs() {
-                    // Line runs along X, offset in Z
-                    editor.set_block(chain_block, *lx, wire_y, *lz + 1, None, None);
-                    editor.set_block(chain_block, *lx, wire_y, *lz - 1, None, None);
-                } else {
-                    // Line runs along Z, offset in X
-                    editor.set_block(chain_block, *lx + 1, wire_y, *lz, None, None);
-                    editor.set_block(chain_block, *lx - 1, wire_y, *lz, None, None);
+            let line_y = (start_y as f64 + (end_y - start_y) as f64 * t).round() as i32;
+            // Clear the highest ground under the whole coplanar bundle.
+            let mut floor = editor.get_ground_level(*lx, *lz) + 3;
+            if three_phase {
+                for (ox, oz) in offsets {
+                    floor = floor.max(editor.get_ground_level(*lx + ox, *lz + oz) + 3);
+                }
+            }
+            let wire_y = (line_y - sag).max(floor);
+            editor.set_block_absolute(chain_block, *lx, wire_y, *lz, None, None);
+            if three_phase {
+                for (ox, oz) in offsets {
+                    editor.set_block_absolute(chain_block, *lx + ox, wire_y, *lz + oz, None, None);
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod turbine_tests {
+    use super::*;
+
+    fn tags(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    // The two 3.2m rotors mounted at level 2 of the Eiffel Tower
+    #[test]
+    fn eiffel_tower_micro_turbines_are_skipped() {
+        let t = tags(&[
+            ("power", "generator"),
+            ("generator:source", "wind"),
+            ("generator:type", "vertical_axis"),
+            ("min_height", "127"),
+            ("level", "2"),
+            ("rotor:diameter", "3.2"),
+        ]);
+        assert!(is_mounted_or_micro_turbine(&t));
+    }
+
+    #[test]
+    fn freestanding_turbine_is_kept() {
+        let t = tags(&[
+            ("power", "generator"),
+            ("generator:source", "wind"),
+            ("height", "150"),
+            ("rotor:diameter", "112"),
+        ]);
+        assert!(!is_mounted_or_micro_turbine(&t));
+        assert!(!is_mounted_or_micro_turbine(&tags(&[(
+            "generator:source",
+            "wind"
+        )])));
     }
 }

@@ -504,8 +504,8 @@ pub fn fetch_gsi_buildings(
         "{}",
         format!(
             "GSI data ready: {} nodes, {} ways",
-            osm_data.elements.iter().filter(|e| e.r#type == "node").count(),
-            osm_data.elements.iter().filter(|e| e.r#type == "way").count(),
+            osm_data.elements().iter().filter(|e| e.r#type == "node").count(),
+            osm_data.elements().iter().filter(|e| e.r#type == "way").count(),
         )
         .green()
         .bold()
