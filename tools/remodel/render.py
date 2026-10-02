@@ -36,6 +36,7 @@ def _props(state: str) -> dict:
 
 def block_boxes(state: str):
     """状態文字列 → ボクセル内の箱 2 つ（局所座標 0..1）。描かないなら None。"""
+    state = state.split("{")[0]  # ブロックエンティティのデータ（旗の模様など）は形に関係ない
     name = state.replace("minecraft:", "").split("[")[0]
     p = _props(state)
     if any(w in state for w in _SKIP_WORDS) or name in ("air", "void_air"):
@@ -71,6 +72,7 @@ def block_boxes(state: str):
 
 def _textures(state: str):
     """(側面テクスチャ, 上面テクスチャ) を 16x16x4 で返す。"""
+    state = state.split("{")[0]
     name = state.replace("minecraft:", "").split("[")[0]
     names = _tex_names()
     side = _texture_for(name)

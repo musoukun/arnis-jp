@@ -65,6 +65,31 @@ class Construction:
         d = json.loads(path.read_text(encoding="utf-8"))
         return {(x, y, z): d["palette"][i] for x, y, z, i in d["blocks"]}
 
+    def extend_baseline(self, source_world: Path):
+        """敷地を広げたとき、控えに無いセルの元の状態を source_world（生成直後のワールドのコピー）から足す。"""
+        path = self.dir / "baseline.json"
+        d = json.loads(path.read_text(encoding="utf-8"))
+        have = {(x, z) for x, _, z, _ in d["blocks"]}
+        missing = self.cells - have
+        if not missing:
+            return 0
+        xs, zs = [c[0] for c in missing], [c[1] for c in missing]
+        snap = load_area(min(xs), min(zs), max(xs), max(zs), y0=self.y0, y1=self.y1, world=source_world)
+        palette = d["palette"]
+        idx = {s: i for i, s in enumerate(palette)}
+        for (x, z) in missing:
+            for y in range(self.y0, self.y1 + 1):
+                s = snap.get(x, y, z)
+                if s not in idx:
+                    idx[s] = len(palette)
+                    palette.append(s)
+                d["blocks"].append([x, y, z, idx[s]])
+        d["box"] = self.box
+        d.setdefault("extended", []).append({"cells": len(missing), "from": str(source_world)})
+        path.write_text(json.dumps(d), encoding="utf-8")
+        print(f"baseline に {len(missing)} セル分を追加（{source_world}）")
+        return len(missing)
+
     # ---- 書き込み ----
     def check_inside(self, blocks: dict):
         bad = [p for p in blocks if (p[0], p[2]) not in self.cells or not (self.y0 <= p[1] <= self.y1)]
@@ -100,7 +125,8 @@ class Construction:
             try:
                 for c in cmds:
                     r = m.command(c)
-                    if any(w in r for w in ("Unknown", "Incorrect", "Expected", "not loaded", "Could not", "Invalid")):
+                    # "Could not set the block" は「すでに同じブロック」（つながり方の状態だけ違う柵など）なので失敗にしない
+                    if any(w in r for w in ("Unknown", "Incorrect", "Expected", "not loaded", "Invalid")):
                         errors += 1
                         if errors <= 10:
                             print("RCONエラー:", c, "->", r)
@@ -111,9 +137,30 @@ class Construction:
         return len(diff)
 
     def reset(self):
-        """更地（baseline）に戻す。"""
+        """更地（baseline）に戻す。額縁（看板の地図アート）も消す。"""
+        self.place_frames([])
         n = self.send(self.baseline(), self.read_world())
         print(f"baseline に戻しました（{n} ブロック変更）")
+
+    def place_frames(self, frames):
+        """敷地内の額縁を全部消してから、frames = [(x, y, z, facing, map_id)] を固定・透明で置く。
+        facing は west/east/north/south。支えのブロックは先に置いておくこと。"""
+        facing_id = {"north": 2, "south": 3, "west": 4, "east": 5}
+        x0, z0, x1, z1 = self.box
+        sel = f"x={x0},y={self.y0},z={z0},dx={x1 - x0},dy={self.y1 - self.y0},dz={z1 - z0}"
+        with rcon() as m:
+            m.command(f"forceload add {x0} {z0} {x1} {z1}")
+            time.sleep(2)
+            try:
+                m.command(f"kill @e[type=minecraft:item_frame,{sel}]")
+                for (x, y, z, facing, map_id) in frames:
+                    nbt = (f'{{Facing:{facing_id[facing]}b,Fixed:1b,Invisible:1b,'
+                           f'Item:{{id:"minecraft:filled_map",count:1,components:{{"minecraft:map_id":{map_id}}}}}}}')
+                    r = m.command(f"summon minecraft:item_frame {x + 0.5} {y + 0.5} {z + 0.5} {nbt}")
+                    if "Summoned" not in r:
+                        print("額縁の設置に失敗:", (x, y, z), "->", r)
+            finally:
+                m.command(f"forceload remove {x0} {z0} {x1} {z1}")
 
     def build(self, design: dict, clear_from_y: int, note: str = ""):
         """baseline を基準に、clear_from_y 以上を空にしてから design を重ねて施工する。"""
