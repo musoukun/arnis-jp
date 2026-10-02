@@ -58,6 +58,10 @@ gen/
 # fixtures under tests/golden.
 /tools/*
 !/tools/map_viewer.html
+!/tools/remodel/
+/tools/remodel/builds/
+/tools/remodel/out/
+__pycache__/
 
 # Miscellaneous
 *.bak
