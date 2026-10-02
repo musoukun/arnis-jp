@@ -20,6 +20,11 @@ const ZOOM: u32 = 16;
 const GSI_NODE_ID_BASE: u64 = 4_000_000_000; // High IDs to avoid OSM collision
 const GSI_WAY_ID_BASE: u64 = 5_000_000_000;
 
+/// True for the synthetic way ids this module hands out (as opposed to real OSM ids).
+pub fn is_gsi_way_id(id: u64) -> bool {
+    id >= GSI_WAY_ID_BASE
+}
+
 // --- MVT Protobuf Definitions ---
 // Mapbox Vector Tile specification: https://github.com/mapbox/vector-tile-spec
 

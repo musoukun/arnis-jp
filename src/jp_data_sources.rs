@@ -143,5 +143,6 @@ pub fn build_jp_generation(
         export: crate::jp_export::JpExportContext::new(),
         export_opts: crate::jp_export::JpExportOptions::from_transformer(&transformer),
         height_resolver,
+        building_heights: std::sync::OnceLock::new(),
     }))
 }

@@ -581,6 +581,11 @@ pub fn generate_world_with_options(
         println!("  Skipped {dropped} building(s) on runways, taxiways and aprons");
     }
 
+    // arnis-jp: match external (PLATEAU / GSI-3D) heights to every footprint up front.
+    if let Some(jp) = &jp {
+        jp.prepare_building_heights(&elements);
+    }
+
     // Create editor with appropriate format
     let mut editor: WorldEditor = if options.format == WorldFormat::LuantiWorld {
         WorldEditor::new_luanti(

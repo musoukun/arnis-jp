@@ -20,6 +20,7 @@
 //! optional parameter.
 
 mod b3dm;
+pub mod footprint;
 pub mod gsi_3d;
 pub mod plateau;
 
@@ -34,13 +35,40 @@ pub struct HeightResult {
     pub source: &'static str,
 }
 
+/// One height sample of a provider: the building's reference point (centroid)
+/// and its height, in geographic coordinates.
+#[derive(Debug, Clone)]
+pub struct HeightPoint {
+    pub lat: f64,
+    pub lng: f64,
+    pub height_m: f64,
+    pub ground_elv_m: Option<f64>,
+    pub source: &'static str,
+}
+
 /// A provider that can look up building heights by centroid coordinate.
 pub trait HeightProvider: Send + Sync {
     /// Look up the height of a building whose centroid is at `(lat, lng)`.
     ///
     /// Returns `None` when no matching building is found within the
     /// provider's tolerance distance.
+    #[allow(dead_code)] // superseded by footprint matching; kept as the centroid-based API
     fn lookup(&self, lat: f64, lng: f64) -> Option<HeightResult>;
+
+    /// Every height sample whose point lies inside the given lat/lng rectangle.
+    ///
+    /// Used for footprint-based matching (which sample lies *inside* a building
+    /// polygon) instead of the nearest-centroid guess of [`lookup`](Self::lookup).
+    /// Providers without point data return nothing.
+    fn points_in_bbox(
+        &self,
+        _min_lat: f64,
+        _min_lng: f64,
+        _max_lat: f64,
+        _max_lng: f64,
+    ) -> Vec<HeightPoint> {
+        Vec::new()
+    }
 
     /// Human-readable name for logging.
     fn name(&self) -> &'static str;
@@ -62,12 +90,25 @@ struct InverseTransform {
 }
 
 impl InverseTransform {
+    #[allow(dead_code)]
     fn mc_to_latlng(&self, x: i32, z: i32) -> (f64, f64) {
-        let rel_x = x as f64 / self.scale_factor_x;
-        let rel_z = z as f64 / self.scale_factor_z;
+        self.mc_to_latlng_f(x as f64, z as f64)
+    }
+
+    fn mc_to_latlng_f(&self, x: f64, z: f64) -> (f64, f64) {
+        let rel_x = x / self.scale_factor_x;
+        let rel_z = z / self.scale_factor_z;
         let lng = rel_x * self.len_lng + self.min_lng;
         let lat = (1.0 - rel_z) * self.len_lat + self.min_lat;
         (lat, lng)
+    }
+
+    /// Forward transform lat/lng → Minecraft XZ (fractional), the exact
+    /// counterpart of `CoordTransformer::transform_point` before truncation.
+    fn latlng_to_mc(&self, lat: f64, lng: f64) -> (f64, f64) {
+        let x = (lng - self.min_lng) / self.len_lng * self.scale_factor_x;
+        let z = (1.0 - (lat - self.min_lat) / self.len_lat) * self.scale_factor_z;
+        (x, z)
     }
 }
 
@@ -118,6 +159,7 @@ impl HeightResolver {
     }
 
     /// Query providers using geographic coordinates.
+    #[allow(dead_code)]
     pub fn resolve(&self, lat: f64, lng: f64) -> Option<HeightResult> {
         for provider in &self.providers {
             if let Some(result) = provider.lookup(lat, lng) {
@@ -131,9 +173,41 @@ impl HeightResolver {
     ///
     /// Internally converts to lat/lng via the inverse transform, then
     /// delegates to [`resolve`](Self::resolve).
+    #[allow(dead_code)]
     pub fn resolve_mc(&self, x: i32, z: i32) -> Option<HeightResult> {
         let (lat, lng) = self.inverse.mc_to_latlng(x, z);
         self.resolve(lat, lng)
+    }
+
+    /// Every provider's height samples inside the Minecraft XZ rectangle
+    /// `[min_x, max_x] x [min_z, max_z]`, placed in Minecraft XZ. One entry per
+    /// provider, in priority order.
+    pub fn samples_in_mc_rect(
+        &self,
+        min_x: f64,
+        max_x: f64,
+        min_z: f64,
+        max_z: f64,
+    ) -> Vec<Vec<footprint::McSample>> {
+        // z grows southwards, so the rectangle's min_z is its maximum latitude.
+        let (max_lat, min_lng) = self.inverse.mc_to_latlng_f(min_x, min_z);
+        let (min_lat, max_lng) = self.inverse.mc_to_latlng_f(max_x, max_z);
+        self.providers
+            .iter()
+            .map(|p| {
+                p.points_in_bbox(min_lat, min_lng, max_lat, max_lng)
+                    .into_iter()
+                    .map(|pt| {
+                        let (x, z) = self.inverse.latlng_to_mc(pt.lat, pt.lng);
+                        footprint::McSample {
+                            x,
+                            z,
+                            height_m: pt.height_m,
+                        }
+                    })
+                    .collect()
+            })
+            .collect()
     }
 
     /// How many providers are registered.
