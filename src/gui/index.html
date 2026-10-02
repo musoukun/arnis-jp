@@ -175,6 +175,14 @@
         </div>
 
         <nav class="settings-nav" aria-label="Settings sections">
+          <button type="button" class="settings-nav-item" data-target="settings-section-japan">
+            <svg class="icon" aria-hidden="true"><use href="#i-map-plus"></use></svg>
+            <span class="settings-nav-text">
+              <span class="settings-nav-title" data-localize="settings_section_japan">Japan Extensions</span>
+              <span class="settings-nav-sub" data-localize="settings_nav_japan">GSI buildings, satellite colors, PLATEAU</span>
+            </span>
+            <span class="settings-nav-dot" aria-hidden="true"></span>
+          </button>
           <button type="button" class="settings-nav-item" data-target="settings-section-world">
             <svg class="icon" aria-hidden="true"><use href="#i-globe"></use></svg>
             <span class="settings-nav-text">
@@ -231,14 +239,6 @@
             </span>
             <span class="settings-nav-dot" aria-hidden="true"></span>
           </button>
-          <button type="button" class="settings-nav-item" data-target="settings-section-japan">
-            <svg class="icon" aria-hidden="true"><use href="#i-map-plus"></use></svg>
-            <span class="settings-nav-text">
-              <span class="settings-nav-title" data-localize="settings_section_japan">Japan Extensions</span>
-              <span class="settings-nav-sub" data-localize="settings_nav_japan">GSI buildings, satellite colors, PLATEAU</span>
-            </span>
-            <span class="settings-nav-dot" aria-hidden="true"></span>
-          </button>
           <button type="button" class="settings-nav-item" data-target="settings-section-about">
             <svg class="icon" aria-hidden="true"><use href="#i-info"></use></svg>
             <span class="settings-nav-text">
@@ -271,6 +271,87 @@
 
         <div class="settings-scrollable">
           <div class="settings-content">
+
+            <!-- Japan Extensions (arnis-jp) -->
+            <section class="settings-section" id="settings-section-japan">
+              <header class="settings-section-head">
+                <span class="settings-section-icon" aria-hidden="true"><svg class="icon"><use href="#i-map-plus"></use></svg></span>
+                <div>
+                  <h3 data-localize="settings_section_japan">Japan Extensions</h3>
+                  <p data-localize="settings_section_japan_desc">Extra data sources for Japan: GSI buildings and elevation, satellite colors and PLATEAU heights.</p>
+                </div>
+              </header>
+
+              <div class="setting-grid">
+                <!-- GSI buildings + DEM -->
+                <div class="settings-row setting-tile">
+                  <label for="gsi-toggle" class="setting-label">
+                    <svg class="icon setting-icon" aria-hidden="true"><use href="#i-building"></use></svg>
+                    <span class="setting-text">
+                      <span class="setting-heading">
+                        <span data-localize="gsi_buildings">GSI Buildings (Japan)</span>
+                        <span class="tooltip-icon" data-tooltip="Use building and elevation data from Japan's Geospatial Information Authority (国土地理院). Provides much more building coverage for Japan than OSM alone, and switches terrain to the GSI DEM." data-tooltip-key="tooltip_gsi_buildings">?</span>
+                      </span>
+                      <span class="setting-desc" data-localize="gsi_buildings_desc">GSI building polygons and GSI DEM terrain (Japan only).</span>
+                    </span>
+                  </label>
+                  <div class="settings-control">
+                    <input type="checkbox" class="switch" id="gsi-toggle" name="gsi-toggle">
+                  </div>
+                </div>
+
+                <!-- Satellite colors -->
+                <div class="settings-row setting-tile">
+                  <label for="satellite-toggle" class="setting-label">
+                    <svg class="icon setting-icon" aria-hidden="true"><use href="#i-palette"></use></svg>
+                    <span class="setting-text">
+                      <span class="setting-heading">
+                        <span data-localize="satellite_colors">Satellite Colors</span>
+                        <span class="tooltip-icon" data-tooltip="Determine building colors from satellite imagery instead of random presets. May not work correctly in some cases." data-tooltip-key="tooltip_satellite_colors">?</span>
+                      </span>
+                      <span class="setting-desc" data-localize="satellite_colors_desc">Building wall colors sampled from satellite imagery.</span>
+                    </span>
+                  </label>
+                  <div class="settings-control">
+                    <input type="checkbox" class="switch" id="satellite-toggle" name="satellite-toggle">
+                  </div>
+                </div>
+
+                <!-- PLATEAU heights -->
+                <div class="settings-row setting-tile">
+                  <label for="plateau-toggle" class="setting-label">
+                    <svg class="icon setting-icon" aria-hidden="true"><use href="#i-ruler"></use></svg>
+                    <span class="setting-text">
+                      <span class="setting-heading">
+                        <span data-localize="plateau_heights">PLATEAU Heights</span>
+                        <span class="tooltip-icon" data-tooltip="Use building height data from PLATEAU (国土交通省 3D都市モデル). Provides accurate building heights for supported cities. Experimental feature." data-tooltip-key="tooltip_plateau_heights">?</span>
+                      </span>
+                      <span class="setting-desc" data-localize="plateau_heights_desc">Accurate building heights from the PLATEAU 3D city model. Experimental.</span>
+                    </span>
+                  </label>
+                  <div class="settings-control">
+                    <input type="checkbox" class="switch" id="plateau-toggle" name="plateau-toggle">
+                  </div>
+                </div>
+
+                <!-- GSI 3D heights (CLI only) -->
+                <div class="settings-row setting-tile settings-row-disabled">
+                  <label for="gsi3d-toggle" class="setting-label">
+                    <svg class="icon setting-icon" aria-hidden="true"><use href="#i-ruler"></use></svg>
+                    <span class="setting-text">
+                      <span class="setting-heading">
+                        <span data-localize="gsi3d_heights">GSI 3D Heights</span>
+                        <span class="tooltip-icon" data-tooltip="Use GSI 3D building height data (国土地理院 3D建物データ). Requires a separately obtained GML file. Currently CLI-only (--gsi-3d)." data-tooltip-key="tooltip_gsi3d_heights">?</span>
+                      </span>
+                      <span class="setting-desc" data-localize="gsi3d_heights_desc">Needs a separately obtained GML file. CLI only (--gsi-3d).</span>
+                    </span>
+                  </label>
+                  <div class="settings-control">
+                    <input type="checkbox" class="switch" id="gsi3d-toggle" name="gsi3d-toggle" disabled>
+                  </div>
+                </div>
+              </div>
+            </section>
 
             <!-- World -->
             <section class="settings-section" id="settings-section-world">
@@ -1058,87 +1139,6 @@
             </section>
 
             <!-- About -->
-            <!-- Japan Extensions (arnis-jp) -->
-            <section class="settings-section" id="settings-section-japan">
-              <header class="settings-section-head">
-                <span class="settings-section-icon" aria-hidden="true"><svg class="icon"><use href="#i-map-plus"></use></svg></span>
-                <div>
-                  <h3 data-localize="settings_section_japan">Japan Extensions</h3>
-                  <p data-localize="settings_section_japan_desc">Extra data sources for Japan: GSI buildings and elevation, satellite colors and PLATEAU heights.</p>
-                </div>
-              </header>
-
-              <div class="setting-grid">
-                <!-- GSI buildings + DEM -->
-                <div class="settings-row setting-tile">
-                  <label for="gsi-toggle" class="setting-label">
-                    <svg class="icon setting-icon" aria-hidden="true"><use href="#i-building"></use></svg>
-                    <span class="setting-text">
-                      <span class="setting-heading">
-                        <span data-localize="gsi_buildings">GSI Buildings (Japan)</span>
-                        <span class="tooltip-icon" data-tooltip="Use building and elevation data from Japan's Geospatial Information Authority (国土地理院). Provides much more building coverage for Japan than OSM alone, and switches terrain to the GSI DEM." data-tooltip-key="tooltip_gsi_buildings">?</span>
-                      </span>
-                      <span class="setting-desc" data-localize="gsi_buildings_desc">GSI building polygons and GSI DEM terrain (Japan only).</span>
-                    </span>
-                  </label>
-                  <div class="settings-control">
-                    <input type="checkbox" class="switch" id="gsi-toggle" name="gsi-toggle">
-                  </div>
-                </div>
-
-                <!-- Satellite colors -->
-                <div class="settings-row setting-tile">
-                  <label for="satellite-toggle" class="setting-label">
-                    <svg class="icon setting-icon" aria-hidden="true"><use href="#i-palette"></use></svg>
-                    <span class="setting-text">
-                      <span class="setting-heading">
-                        <span data-localize="satellite_colors">Satellite Colors</span>
-                        <span class="tooltip-icon" data-tooltip="Determine building colors from satellite imagery instead of random presets. May not work correctly in some cases." data-tooltip-key="tooltip_satellite_colors">?</span>
-                      </span>
-                      <span class="setting-desc" data-localize="satellite_colors_desc">Building wall colors sampled from satellite imagery.</span>
-                    </span>
-                  </label>
-                  <div class="settings-control">
-                    <input type="checkbox" class="switch" id="satellite-toggle" name="satellite-toggle">
-                  </div>
-                </div>
-
-                <!-- PLATEAU heights -->
-                <div class="settings-row setting-tile">
-                  <label for="plateau-toggle" class="setting-label">
-                    <svg class="icon setting-icon" aria-hidden="true"><use href="#i-ruler"></use></svg>
-                    <span class="setting-text">
-                      <span class="setting-heading">
-                        <span data-localize="plateau_heights">PLATEAU Heights</span>
-                        <span class="tooltip-icon" data-tooltip="Use building height data from PLATEAU (国土交通省 3D都市モデル). Provides accurate building heights for supported cities. Experimental feature." data-tooltip-key="tooltip_plateau_heights">?</span>
-                      </span>
-                      <span class="setting-desc" data-localize="plateau_heights_desc">Accurate building heights from the PLATEAU 3D city model. Experimental.</span>
-                    </span>
-                  </label>
-                  <div class="settings-control">
-                    <input type="checkbox" class="switch" id="plateau-toggle" name="plateau-toggle">
-                  </div>
-                </div>
-
-                <!-- GSI 3D heights (CLI only) -->
-                <div class="settings-row setting-tile settings-row-disabled">
-                  <label for="gsi3d-toggle" class="setting-label">
-                    <svg class="icon setting-icon" aria-hidden="true"><use href="#i-ruler"></use></svg>
-                    <span class="setting-text">
-                      <span class="setting-heading">
-                        <span data-localize="gsi3d_heights">GSI 3D Heights</span>
-                        <span class="tooltip-icon" data-tooltip="Use GSI 3D building height data (国土地理院 3D建物データ). Requires a separately obtained GML file. Currently CLI-only (--gsi-3d)." data-tooltip-key="tooltip_gsi3d_heights">?</span>
-                      </span>
-                      <span class="setting-desc" data-localize="gsi3d_heights_desc">Needs a separately obtained GML file. CLI only (--gsi-3d).</span>
-                    </span>
-                  </label>
-                  <div class="settings-control">
-                    <input type="checkbox" class="switch" id="gsi3d-toggle" name="gsi3d-toggle" disabled>
-                  </div>
-                </div>
-              </div>
-            </section>
-
             <section class="settings-section" id="settings-section-about">
               <header class="settings-section-head">
                 <span class="settings-section-icon" aria-hidden="true"><svg class="icon"><use href="#i-info"></use></svg></span>
