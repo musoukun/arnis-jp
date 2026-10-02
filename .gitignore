@@ -54,3 +54,5 @@ gen/
 !/flake/flake.lock
 # test output
 test_output
+# ローカルのMinecraftサーバー（ワールド・jar）
+/minecraft-server/
