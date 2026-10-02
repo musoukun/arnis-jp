@@ -5,7 +5,6 @@
 /// exist for `world_mapping.json`.  Keeping these separate from
 /// the upstream `GenerationOptions` avoids merge conflicts when
 /// upstream adds or changes fields.
-
 use crate::building_height::HeightResolver;
 use crate::building_metadata::BuildingMetadataCollector;
 use crate::coordinate_system::geographic::LLBBox;

@@ -6,8 +6,7 @@
 /// conflicts are minimised.
 
 /// GSI DEM PNG tiles endpoint (no API key required, Japan only)
-pub const GSI_DEM_URL: &str =
-    "https://cyberjapandata.gsi.go.jp/xyz/dem_png/{z}/{x}/{y}.png";
+pub const GSI_DEM_URL: &str = "https://cyberjapandata.gsi.go.jp/xyz/dem_png/{z}/{x}/{y}.png";
 
 /// Maximum zoom level for GSI DEM tiles
 pub const GSI_MAX_ZOOM: u8 = 14;

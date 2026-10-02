@@ -219,20 +219,5 @@
   "one_world_confirm_title": "既存のチャンクを置き換えますか？",
   "one_world_confirm_text": "このエリアの {count} チャンクは既にワールドにあります。再生成され、Minecraft でそこに建てたものは置き換えられます。",
   "one_world_confirm_cancel": "キャンセル",
-  "one_world_confirm_ok": "生成",
-  "settings_section_japan": "日本向け拡張機能",
-  "settings_nav_japan": "国土地理院の建物、衛星画像カラー、PLATEAU",
-  "settings_section_japan_desc": "日本向けの追加データソース：国土地理院の建物と標高、衛星画像カラー、PLATEAUの建物高さ。",
-  "gsi_buildings": "国土地理院 建物データ",
-  "gsi_buildings_desc": "国土地理院の建物ポリゴンと標高タイルで地形を生成します（日本のみ）。",
-  "satellite_colors": "衛星画像カラー（試験版）",
-  "satellite_colors_desc": "衛星画像から建物の壁の色を決めます。",
-  "plateau_heights": "PLATEAU 建物高さ（試験的）",
-  "plateau_heights_desc": "PLATEAU 3D都市モデルから正確な建物高さを取得します。試験的機能です。",
-  "gsi3d_heights": "GSI 3D 建物高さ（要データ準備）",
-  "gsi3d_heights_desc": "別途入手したGMLファイルが必要です。現在CLIのみ対応（--gsi-3d）。",
-  "tooltip_gsi_buildings": "国土地理院の建物データと標高タイルを使用します。日本国内ではOSM単体より多くの建物をカバーでき、地形も国土地理院の標高タイルに切り替わります。タイルはローカルにキャッシュされます。",
-  "tooltip_satellite_colors": "衛星画像から建物の色を判定します（ランダムプリセットの代わり）。正常に動作しない場合があります。",
-  "tooltip_plateau_heights": "国土交通省の3D都市モデル（PLATEAU）から建物の実測高さを取得します。対応都市のみ有効。試験的機能です。",
-  "tooltip_gsi3d_heights": "国土地理院の3D建物データ（GMLファイル）を使用します。別途データの入手が必要です。現在CLIのみ対応（--gsi-3d）。"
+  "one_world_confirm_ok": "生成"
 }

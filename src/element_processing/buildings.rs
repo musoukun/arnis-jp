@@ -7497,9 +7497,11 @@ pub fn generate_buildings(
             group_seed,
         )
     });
-    // Untagged towers read better on the taller commercial rhythm.
+    // Untagged towers read better on the taller commercial rhythm (an external height is final).
+    let retune_untagged_tower_to_commercial_rhythm =
+        external_height.is_none() && is_tall_building && building_type == "yes" && floor_cycle == 3;
     let (floor_cycle, building_height, is_tall_building, min_level_offset) =
-        if external_height.is_none() && is_tall_building && building_type == "yes" && floor_cycle == 3 {
+        if retune_untagged_tower_to_commercial_rhythm {
             let (h, tall) = calculate_building_height(
                 element,
                 building_type,

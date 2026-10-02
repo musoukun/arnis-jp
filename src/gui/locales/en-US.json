@@ -219,20 +219,5 @@
   "one_world_confirm_title": "Replace existing chunks?",
   "one_world_confirm_text": "{count} chunks of this area already exist in the world. They are generated again, and anything built there in Minecraft is replaced.",
   "one_world_confirm_cancel": "Cancel",
-  "one_world_confirm_ok": "Generate",
-  "settings_section_japan": "Japan Extensions",
-  "settings_nav_japan": "GSI buildings, satellite colors, PLATEAU",
-  "settings_section_japan_desc": "Extra data sources for Japan: GSI buildings and elevation, satellite colors and PLATEAU heights.",
-  "gsi_buildings": "GSI Buildings (Japan)",
-  "gsi_buildings_desc": "GSI building polygons and GSI DEM terrain (Japan only).",
-  "satellite_colors": "Satellite Colors",
-  "satellite_colors_desc": "Building wall colors sampled from satellite imagery.",
-  "plateau_heights": "PLATEAU Heights",
-  "plateau_heights_desc": "Accurate building heights from the PLATEAU 3D city model. Experimental.",
-  "gsi3d_heights": "GSI 3D Heights",
-  "gsi3d_heights_desc": "Needs a separately obtained GML file. CLI only (--gsi-3d).",
-  "tooltip_gsi_buildings": "Use building and elevation data from Japan's Geospatial Information Authority (国土地理院). Provides much more building coverage for Japan than OSM alone, and switches terrain to the GSI DEM.",
-  "tooltip_satellite_colors": "Determine building colors from satellite imagery instead of random presets. May not work correctly in some cases.",
-  "tooltip_plateau_heights": "Use building height data from PLATEAU (国土交通省 3D都市モデル). Provides accurate building heights for supported cities. Experimental feature.",
-  "tooltip_gsi3d_heights": "Use GSI 3D building height data (国土地理院 3D建物データ). Requires a separately obtained GML file. Currently CLI-only (--gsi-3d)."
+  "one_world_confirm_ok": "Generate"
 }

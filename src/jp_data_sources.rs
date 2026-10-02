@@ -5,7 +5,6 @@
 /// thin wrapper functions.  `main.rs` and `gui.rs` call these
 /// one-liners instead of inlining the logic, keeping upstream
 /// merge diffs minimal.
-
 use colored::Colorize;
 
 use crate::args::Args;
@@ -75,9 +74,9 @@ pub fn add_jp_height_providers(args: &Args, bbox: &LLBBox, height_resolver: &mut
             "{} Loading GSI 3D building height data...",
             "[GSI-3D]".bright_white().bold()
         );
-        match crate::building_height::gsi_3d::Gsi3dProvider::from_gml_file(
-            std::path::Path::new(gml_path),
-        ) {
+        match crate::building_height::gsi_3d::Gsi3dProvider::from_gml_file(std::path::Path::new(
+            gml_path,
+        )) {
             Ok(provider) => {
                 height_resolver.add_provider(Box::new(provider));
             }

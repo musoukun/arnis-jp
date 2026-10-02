@@ -162,7 +162,11 @@ fn decode_tile(bytes: &[u8]) -> Result<TileHeights, String> {
         .map_err(|e| e.to_string())?
         .to_rgba8();
     if img.width() as usize != TILE_SIZE || img.height() as usize != TILE_SIZE {
-        return Err(format!("unexpected tile size {}x{}", img.width(), img.height()));
+        return Err(format!(
+            "unexpected tile size {}x{}",
+            img.width(),
+            img.height()
+        ));
     }
     Ok(img
         .pixels()

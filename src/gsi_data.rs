@@ -97,18 +97,11 @@ fn lat_lng_to_tile(lat: f64, lng: f64) -> (u32, u32) {
     (x, y)
 }
 
-fn tile_pixel_to_lat_lng(
-    tile_x: u32,
-    tile_y: u32,
-    px: f64,
-    py: f64,
-    extent: u32,
-) -> (f64, f64) {
+fn tile_pixel_to_lat_lng(tile_x: u32, tile_y: u32, px: f64, py: f64, extent: u32) -> (f64, f64) {
     let n = (1u64 << ZOOM) as f64;
     let ext = extent as f64;
     let lng = (tile_x as f64 + px / ext) / n * 360.0 - 180.0;
-    let lat_rad = (std::f64::consts::PI
-        * (1.0 - 2.0 * (tile_y as f64 + py / ext) / n))
+    let lat_rad = (std::f64::consts::PI * (1.0 - 2.0 * (tile_y as f64 + py / ext) / n))
         .sinh()
         .atan();
     let lat = lat_rad.to_degrees();
@@ -260,11 +253,7 @@ struct GsiBuilding {
     vt_code: u32,
 }
 
-fn extract_buildings_from_tile(
-    pbf_data: &[u8],
-    tile_x: u32,
-    tile_y: u32,
-) -> Vec<GsiBuilding> {
+fn extract_buildings_from_tile(pbf_data: &[u8], tile_x: u32, tile_y: u32) -> Vec<GsiBuilding> {
     use prost::Message;
 
     let tile = match mvt::Tile::decode(pbf_data) {
@@ -352,9 +341,7 @@ fn extract_buildings_from_tile(
 // --- Bbox Filtering ---
 
 fn building_centroid(building: &GsiBuilding) -> (f64, f64) {
-    let points = if building.coords.len() > 1
-        && building.coords.first() == building.coords.last()
-    {
+    let points = if building.coords.len() > 1 && building.coords.first() == building.coords.last() {
         &building.coords[..building.coords.len() - 1]
     } else {
         &building.coords
@@ -427,20 +414,15 @@ fn buildings_to_osm_data(buildings: &[GsiBuilding]) -> OsmData {
 
 /// Fetch GSI building data for the given bbox and return as OsmData.
 /// Uses local cache: tiles are downloaded once and stored in the system cache directory.
-pub fn fetch_gsi_buildings(
-    bbox: LLBBox,
-) -> Result<OsmData, Box<dyn std::error::Error>> {
+pub fn fetch_gsi_buildings(bbox: LLBBox) -> Result<OsmData, Box<dyn std::error::Error>> {
     let tiles = get_tile_range(&bbox);
     let total = tiles.len();
 
     println!(
         "{}",
-        format!(
-            "GSI building data: {} tile(s) to process (z={ZOOM})",
-            total
-        )
-        .bright_white()
-        .bold()
+        format!("GSI building data: {} tile(s) to process (z={ZOOM})", total)
+            .bright_white()
+            .bold()
     );
 
     let client = Client::builder()
@@ -453,11 +435,7 @@ pub fn fetch_gsi_buildings(
     for (i, (tx, ty)) in tiles.iter().enumerate() {
         // Try cache first
         let pbf_data = if let Some(cached) = read_cached_tile(*tx, *ty) {
-            println!(
-                "  [{}/{}] Tile {ZOOM}/{tx}/{ty} (cached)",
-                i + 1,
-                total
-            );
+            println!("  [{}/{}] Tile {ZOOM}/{tx}/{ty} (cached)", i + 1, total);
             cached
         } else {
             println!(
@@ -493,10 +471,7 @@ pub fn fetch_gsi_buildings(
         })
         .collect();
 
-    println!(
-        "GSI buildings within bbox: {}",
-        in_bbox.len()
-    );
+    println!("GSI buildings within bbox: {}", in_bbox.len());
 
     let osm_data = buildings_to_osm_data(&in_bbox);
 
@@ -504,8 +479,16 @@ pub fn fetch_gsi_buildings(
         "{}",
         format!(
             "GSI data ready: {} nodes, {} ways",
-            osm_data.elements().iter().filter(|e| e.r#type == "node").count(),
-            osm_data.elements().iter().filter(|e| e.r#type == "way").count(),
+            osm_data
+                .elements()
+                .iter()
+                .filter(|e| e.r#type == "node")
+                .count(),
+            osm_data
+                .elements()
+                .iter()
+                .filter(|e| e.r#type == "way")
+                .count(),
         )
         .green()
         .bold()

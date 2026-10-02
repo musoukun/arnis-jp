@@ -28,11 +28,11 @@ OSMだけではカバーしきれない日本の住宅地の建物ポリゴン�
 ### CLI
 
 ```bash
-# 建物データのみ（OSMとマージ）
+# 建物（OSMとマージ）+ 地形（GSI DEM）。upstream v3系では地形が既定でONのため --gsi だけで両方になる
 cargo run -- --bbox "34.58,135.51,34.59,135.52" --gsi --output-dir "..."
 
-# 建物 + 地形（GSI DEM使用）
-cargo run -- --bbox "34.58,135.51,34.59,135.52" --gsi --terrain --output-dir "..."
+# 建物のみGSI、地形なし（フラット）
+cargo run -- --bbox "34.58,135.51,34.59,135.52" --gsi --mode geo-only --output-dir "..."
 
 # 従来通り（GSIなし）
 cargo run -- --bbox "34.58,135.51,34.59,135.52" --output-dir "..."
@@ -55,8 +55,9 @@ Settings画面の「GSI Buildings (Japan)」チェックボックスをONにす�
 4. OSMデータとマージ
 5. パース → ワールド生成
 
---gsi + --terrain 指定時:
-  標高データをAWS TerrariumではなくGSI DEMから取得
+--gsi 指定時（地形が有効なとき）:
+  標高データをMapterhorn/AWSではなくGSI DEM（src/elevation/providers/gsi_dem.rs）から取得。
+  タイルが取得できない・大半が欠損の場合は upstream のフォールバック連鎖でAWSに切り替わる
 ```
 
 ## 建物データ詳細
@@ -130,12 +131,14 @@ height_m = (R * 256 + G + B/256) - 32768
 
 ### 選択ロジック
 
-| `--gsi` | `--terrain` | 標高ソース |
-|---------|-------------|-----------|
-| なし | なし | フラット（標高なし） |
-| なし | あり | AWS Terrarium |
-| あり | なし | フラット（標高なし） |
-| あり | あり | GSI DEM |
+| `--gsi` | `--mode` | 標高ソース |
+|---------|----------|-----------|
+| なし | geo-terrain（既定）/ terrain-only | Mapterhorn（失敗時AWS） |
+| なし | geo-only | フラット（標高なし） |
+| あり | geo-terrain（既定）/ terrain-only | GSI DEM（欠損時AWS） |
+| あり | geo-only | フラット（標高なし） |
+
+※ `--terrain` は upstream で非推奨の no-op（地形は既定でON）。
 
 ## キャッシュ
 
@@ -182,8 +185,9 @@ height_m = (R * 256 + G + B/256) - 32768
 | `Cargo.toml` | `prost` 依存追加 |
 | `src/gsi_data.rs` | **新規**: 建物タイル取得・キャッシュ・MVTデコード・OsmData変換 |
 | `src/osm_parser.rs` | `OsmData`/`OsmElement` を crate 内公開、`merge()`/`from_elements()` 追加 |
-| `src/elevation_data.rs` | GSI DEM URL・デコード式追加、`use_gsi` パラメータ |
-| `src/ground.rs` | `use_gsi` フラグの引き回し |
+| `src/elevation/providers/gsi_dem.rs` | **新規**: GSI DEM を `ElevationProvider` として実装（`gsi_elevation.rs` のURL・デコードを利用） |
+| `src/elevation/selector.rs` | `SourceMode::Gsi` 追加 |
+| `src/ground.rs` | `use_gsi` フラグの引き回し（`Ground::new_enabled`） |
 | `src/args.rs` | `--gsi` フラグ追加 |
 | `src/main.rs` | `mod gsi_data` + GSIデータマージロジック |
 | `src/gui.rs` | `gsi_enabled` パラメータ追加 |
