@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::time::Duration;
 
-const LATEST_RELEASE_API_URL: &str = "https://api.github.com/repos/louis-e/arnis/releases/latest";
+const LATEST_RELEASE_API_URL: &str = "https://api.github.com/repos/musoukun/arnis-jp/releases/latest";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReleaseAsset {
@@ -50,7 +50,7 @@ fn build_client() -> reqwest::Result<Client> {
         .user_agent(concat!(
             "Arnis/",
             env!("CARGO_PKG_VERSION"),
-            " (+https://github.com/louis-e/arnis)"
+            " (+https://github.com/musoukun/arnis-jp)"
         ))
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(10))
