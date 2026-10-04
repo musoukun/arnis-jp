@@ -65,19 +65,9 @@ gen/
 !/tools/skill_eval/
 /tools/skill_eval/reports/
 /tools/skill_eval/versions/
-!/tools/remodel/
-/tools/remodel/builds/
-/tools/remodel/out/
-# 建物ごとのデータ・生成物・個人設定はソースではないのでコミットしない（ユーザー指定 2026-10-04）
-# ただし設計の型（パーツのフォルダ）と、KFC 堺北花田の正解 v2 だけは image2mc-builder スキルのサンプルとして入れる（ユーザー指定 2026-10-04）
-/tools/remodel/designs/*
-!/tools/remodel/designs/_parts_template/
-!/tools/remodel/designs/kfc_kitahanada_v2.py
-/tools/remodel/specs/
-/tools/remodel/builds*/
-/tools/remodel/block_catalog.json
-/tools/remodel/view.json
-/tools/remodel/cmp.py
+# image2mc-builder スキルの作業フォルダ（建物ごとの設計・質問・絵・施工の控え・設定）。
+# スキルが使う人の作業フォルダに作るもので、スキルそのものではないのでコミットしない
+/image2mc/
 __pycache__/
 
 # Miscellaneous

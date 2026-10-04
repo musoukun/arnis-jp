@@ -1,20 +1,24 @@
 # 参照（必要な時だけ読む）
 
-[SKILL.md](SKILL.md) の手順の途中で、準備・トラブル・道具の一覧・正解例が要る時だけ開く。
+[SKILL.md](../SKILL.md) の手順の途中で、準備・トラブル・道具の一覧・正解例が要る時だけ開く。
 
 ## 準備
+- **設定**: 最初に `python <スキル>/scripts/setup.py show`。足りない項目（サーバーのフォルダ `server_dir`、
+  ワールドを作った OSM データ `osm_json`、Minecraft 本体の jar `minecraft_jar`）はユーザーに聞き、`setup.py set key=値` で保存する
+  （`setup.py detect` で候補を出せる）。設定は作業フォルダの `image2mc/config.json` に入る。
+  ワールドの場所・RCON の場所とパスワードは `server_dir` の `server.properties` から毎回読む（保存しない。RCON が無効なら有効にしてもらう）
 - ワールドは **倍率 1.4**（既定。GUI なら「体感リアルサイズ」をオン）で生成する（法則1）:
   `arnis --bbox "<南,西,北,東>" --file <OSM JSON> --gsi --plateau --scale 1.4 --output-dir <出力>`。
   生成直後のワールドのコピーは捨てない（控えの追加に使う）。
 - **ワールド倍率は実行のたびに確かめる（必須）**: `run.py` が毎回 `world_mapping.json` の `scale` と、
   それに合わせた建物の幅・奥行き（倍率 − 0.1）・1車線・駐車場入口のマス数を表示する。1.4 以外なら止まるので、
   ユーザーに「倍率 ◯ で作ってよいか」を聞き、よければ `REMODEL_SCALE=<倍率>` を付けて実行し直す
-- サーバー: `minecraft-server/`（1.21.11、RCON `127.0.0.1:25575` / `arnis2026`）。ユーザーのターミナルで起動する
-  （Claude の裏の実行は2時間で止まる）: `cd D:\develop\arnis-jp\minecraft-server; java -Xms2G -Xmx8G -jar server.jar nogui`
-- 1.21.11 のゲームルール名は新形式（昼の固定は `gamerule advance_time false`）
+- サーバーは、ユーザーのターミナルで起動してもらう（Claude の裏の実行は2時間で止まる）。
+  起動のしかたが分からなければユーザーに聞く（例: サーバーのフォルダで `java -Xms2G -Xmx8G -jar server.jar nogui`）
+- 1.21.11 以降のゲームルール名は新形式（昼の固定は `gamerule advance_time false`）
 
-- **視野角**: `tools/remodel/view.json` の `fov`（既定 **102**、ユーザーの Minecraft の設定）。ゲーム内と比べる絵はこの値で描く。
-  **ユーザーが視野角を指定したら `view.json` を書き換えて覚える**（次の建物でもその値を使う）。
+- **視野角**: 設定の `fov`（既定 **102**、ユーザーの Minecraft の設定）。ゲーム内と比べる絵はこの値で描く。
+  **ユーザーが視野角を指定したら `setup.py set fov=<値>` で覚える**（次の建物でもその値を使う）。
   写真の視点に合わせるカメラだけは `CAMERAS` に `vfov` を書く（写真のレンズに合わせる）
 
 
@@ -47,24 +51,29 @@
 
 ---
 
-## 道具（tools/remodel/）
+## 道具（スキルの scripts/）
 
 | ファイル | 役割 |
 |---|---|
-| `run.py` | 入口: `python run.py <設計名> preview|section|check|build|reset|capture|diff|doortest` |
+| `setup.py` / `config.py` | 設定（作業フォルダの `config.json`）を見る・保存する / 道具が設定と作業フォルダを読む所 |
+| `run.py` | 入口: `python <スキル>/scripts/run.py <設計名> preview|section|check|build|reset|capture|diff|doortest` |
 | `ask_form.py` | 質問のフォームの型（質問の JSON → チャットに出すフォームの HTML） |
 | `parts_ref.py` | 部品の早見表（parts.md）を parts.py から作り直す |
 | `checks.py` | 施工の前の確かめ: `section`（断面の AA）、`inspect`（帯の下などの細長いすき間・足元に沈んだ看板・外から見えるレッドストーン） |
 | `parts.py` | 部品ライブラリ: `build(spec, geo)`（床・壁・窓・ひさし・帯・屋根・看板の裏）、外まわりの部品、`entrance`（入れる入口。`steps="slab"` でハーフの段）、`planter_ring`・`eave_slab`・`lattice`・`box_on_roof`・`bollard`（部位の辞書の部品）、`sign_cells`（看板の向き）、`auto_door`（感圧板＋ピストンのガラス自動扉）、`furnish`（机・椅子・吊りランタン）、`louver`（屋上のルーバー）、`DEFAULT_PAL` |
 | `scale.py` | （参考のみ）実寸 → マス数の換算。**部位の大きさを決めるのには使わない**（法則1: 目で見た比率と人の体で決める） |
 | `block_catalog.py` | ブロックの色の対応表（全ブロックのテクスチャ・平均色・一番多い色と割合）と、写真の範囲 → 近いブロックを実物のテクスチャと並べる `match` |
-| `view.json` | ユーザーの視野角（既定 102）。指定されたら書き換える |
 | `map_art.py` | 地図アート（文字画像、減色、`world/data/` への書き出し） |
 | `builder.py` | `Construction`: baseline の控え・`find_connected`/`add_demolition`（解体）・`extend_baseline`・`check_inside`・差分送信（forceload）・`place_frames`・`reset` |
 | `parcel.py` | OSM のポリゴン → セル、外周、内側への距離 |
 | `render.py` / `world_reader.py` / `block_colors.py` | 検証用の描画、リージョンファイルの読み込み、ブロックの平均色 |
-| `designs/<建物>/` | 建物ごとの設計（パーツのフォルダ）。git に入れるのは型の `_parts_template/` と、サンプルの正解 `kfc_kitahanada_v2.py` だけ（ほかの建物の設計は管理外） |
-`builds/`（控え・施工記録）と `out/`（プレビュー）はワールドごとのローカルデータで、git の管理外。
+
+スキルの中のほかのもの: `assets/parts_template/`（設計のフォルダの型）、`assets/map_palette.json`（地図アートの色）、
+`examples/kfc_kitahanada/`（サンプル: 設計 `design_v2.py`・お手本・正解）。
+
+**作業フォルダ**（Claude Code を開いているフォルダの `image2mc/`。スキルのフォルダには書かない）:
+`config.json`（設定）、`designs/<建物>/`（建物ごとの設計）、`specs/`（質問の JSON）、`out/`（プレビュー・フォーム・カタログの一覧）、
+`builds/`（控え・施工記録）、`block_catalog.json`（使う人の Minecraft の版で作るブロックの対応表）。
 `builds/<建物>/baseline.json` は施工前の敷地の控えで、`reset` と解体に要るので消さない。
 
 ---

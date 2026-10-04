@@ -1,0 +1,5 @@
+mcrcon
+nbtlib
+numpy
+Pillow
+scipy

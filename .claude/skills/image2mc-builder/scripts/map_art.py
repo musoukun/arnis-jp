@@ -2,12 +2,12 @@
 看板などを「地図アート」（額縁に入れた地図 = 1ブロックに128x128ドット）で描く。
 
 ブロックでは表せない 1m 未満の文字や絵を、実物大のまま読めるように置くための部品。
-- パレットは arnis 本体の src/map_item_palette.rs から読む（62色 x 明るさ4段）
+- パレットはスキルの assets/map_palette.json（Minecraft の地図の色、62色 x 明るさ4段）
 - 地図データは world/data/ に map_<id>.dat と <id>.dat の両方で書く（arnis 本体と同じ）
 - サーバーは一度読んだ地図をキャッシュするので、描き直すときは新しい id を使う
 """
 
-import re
+import json
 from pathlib import Path
 
 import nbtlib
@@ -15,19 +15,21 @@ import numpy as np
 from nbtlib.tag import Byte, ByteArray, Compound, Int, List, String
 from PIL import Image, ImageDraw, ImageFont
 
+import config
 from block_colors import rgb_to_lab
 
-from world_reader import ROOT, WORLD
 FONT_BOLD = "C:/Windows/Fonts/BIZ-UDGothicB.ttc"
 SIZE = 128
 
 
+def _palette_source():
+    """(base_colors, shade_multipliers)。"""
+    p = json.loads((config.ASSETS / "map_palette.json").read_text(encoding="utf-8"))
+    return [tuple(c) for c in p["base_colors"]], p["shade_multipliers"]
+
+
 def _palette():
-    src = (ROOT / "src" / "map_item_palette.rs").read_text(encoding="utf-8")
-    base = src[src.index("BASE_COLORS"):]
-    base = base[:base.index("];")]
-    colors = [tuple(int(v) for v in m) for m in re.findall(r"\((\d+),\s*(\d+),\s*(\d+)\)", base)]
-    shades = [int(v) for v in re.search(r"SHADE_MULTIPLIERS[^=]*=\s*\[([^\]]+)\]", src).group(1).split(",")]
+    colors, shades = _palette_source()
     ids, rgbs = [], []
     for b, (r, g, bl) in enumerate(colors):
         if b == 0:
@@ -51,7 +53,8 @@ def quantize(img: Image.Image) -> bytes:
     return bytes(int(v) & 0xFF for v in ids)
 
 
-def write_map(map_id: int, img: Image.Image, world: Path = WORLD):
+def write_map(map_id: int, img: Image.Image, world: Path = None):
+    world = world or config.world()
     data_version = int(nbtlib.load(world / "level.dat")["Data"]["DataVersion"])
     colors = quantize(img)
     root = nbtlib.File({
@@ -122,11 +125,7 @@ def vertical_text_image(text: str, cols: int, rows: int, fg, bg, top_band=None):
 
 
 def _palette_rgb():
-    src = (ROOT / "src" / "map_item_palette.rs").read_text(encoding="utf-8")
-    base = src[src.index("BASE_COLORS"):]
-    base = base[:base.index("];")]
-    colors = [tuple(int(v) for v in m) for m in re.findall(r"\((\d+),\s*(\d+),\s*(\d+)\)", base)]
-    shades = [int(v) for v in re.search(r"SHADE_MULTIPLIERS[^=]*=\s*\[([^\]]+)\]", src).group(1).split(",")]
+    colors, shades = _palette_source()
     return {b * 4 + s: (r * m // 255, g * m // 255, bl * m // 255)
             for b, (r, g, bl) in enumerate(colors) for s, m in enumerate(shades)}
 

@@ -10,7 +10,8 @@
   python run.py <設計名> export [保存先]  … 設計そのものを正解の控えとして書き出す（施工せずに正解を作る）
   python run.py <設計名> faces           … 面ごとの長さ（SHAPE で整えた後）。質問のスライダーの length はこの長さにする
   python run.py <設計名> doortest        … 自動扉の試験（感圧板に防具立てを置いて開閉を確かめる。誰かがログインしている時だけ）
-<設計名> は designs/<設計名>.py。
+<設計名> は作業フォルダの designs/<設計名>/（または designs/<設計名>.py）。作ったもの（out/・builds/）も作業フォルダに出る。
+最初に setup.py show で設定（サーバー・OSM データ・Minecraft の jar）がそろっているか確かめる。
 """
 
 import importlib
@@ -21,21 +22,21 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE / "designs"))
+import config
+
+sys.path.insert(0, str(config.work("designs")))   # 建物ごとの設計は作業フォルダ
 
 import checks
 import parts
 from builder import AIR, Construction, norm
-from parcel import ROOT, OsmGeometry, cells_in
+from parcel import OsmGeometry, cells_in
 from render import VoxelScene, render_top, render_view
 from world_reader import load_area
 
-OUT = HERE / "out"  # プレビュー画像（git 管理外）
-OUT.mkdir(exist_ok=True)
-OSM_JSON = ROOT / "doc" / "kitahanada" / "osm_data.json"
-# ユーザーの Minecraft の視野角（既定 102、ユーザーが指定したら view.json を書き換える）
-VIEW = json.loads((HERE / "view.json").read_text(encoding="utf-8"))  # arnis が保存した OSM（範囲が違えば osm_cache の方）
+OUT = config.work("out")  # プレビュー画像（作業フォルダ）
+OUT.mkdir(parents=True, exist_ok=True)
+# ユーザーの Minecraft の視野角（設定の fov、既定 102。ユーザーが指定したら setup.py set fov=<値>）
+VIEW = {"fov": config.fov()}
 
 
 def detect_ground(geo, spec, site) -> int:
@@ -44,7 +45,7 @@ def detect_ground(geo, spec, site) -> int:
     around = {(x + dx, z + dz) for (x, z) in bld for dx in range(-3, 4) for dz in range(-3, 4)}
     probe = set(c for c in site if c not in around)
     top = {}
-    base = HERE / "builds" / spec.__name__ / "baseline.json"
+    base = config.work("builds", spec.__name__, "baseline.json")
     if base.exists():   # 施工したあとは、まわりに置いた物で地面が上がって見えるので、施工前の控えで測る
         b = json.loads(base.read_text(encoding="utf-8"))
         for x, y, z, i in b["blocks"]:
@@ -72,7 +73,7 @@ def check_world_scale(geo):
 
 def load(name: str):
     spec = importlib.import_module(name)
-    geo = OsmGeometry(OSM_JSON)
+    geo = OsmGeometry()   # 設定の OSM データとワールド
     check_world_scale(geo)
     site = spec.site_cells(geo)
     spec.G = detect_ground(geo, spec, site)
@@ -116,7 +117,7 @@ def place_signs(spec, geo, con):
         return
     import map_art as M
     # 建物ごとの施工番号から決めると建物同士で id がぶつかるので、既存の地図ファイルの最大 id の次から使う
-    used = [int(p.stem.removeprefix("map_")) for p in (M.WORLD / "data").glob("*.dat")
+    used = [int(p.stem.removeprefix("map_")) for p in (config.world() / "data").glob("*.dat")
             if p.stem.removeprefix("map_").isdigit()]
     next_id = max([30000] + [u + 1 for u in used if u >= 30000])
     imgs = spec.sign_images()
@@ -152,9 +153,8 @@ def other_buildings(spec, geo):
 def demolish(spec, geo, con):
     """解体: 元の建物の土台からつながるブロック（はみ出した屋根・柵など）を、敷地の外まで追って消す。
     ほかの建物（OSM の building）のセルには入らない。"""
-    from world_reader import WORLD
     footprint = cells_in(geo.polygon(spec.WAY))
-    con.add_demolition(con.find_connected(footprint, spec.G, other_buildings(spec, geo)), WORLD)
+    con.add_demolition(con.find_connected(footprint, spec.G, other_buildings(spec, geo)), config.world())
 
 
 def capture(spec, geo, site, path):
@@ -215,7 +215,7 @@ def diff(spec, geo, site, path):
     door = {(x, z) for (x, y, z, st) in parts.build(spec, geo).ordered}   # 自動扉の動く所（開け閉めで変わる）
     door |= {(x + dx, z + dz) for (x, z) in door for dx in (-1, 0, 1) for dz in (-1, 0, 1)}
     # 施工が管理している範囲（控えの範囲か、設計が地面より上に何か置く列）だけ比べる。外は元からある物
-    bpath = HERE / "builds" / spec.__name__ / "baseline.json"
+    bpath = config.work("builds", spec.__name__, "baseline.json")
     bx0, bz0, bx1, bz1 = json.loads(bpath.read_text(encoding="utf-8"))["box"] if bpath.exists() else (0, 0, -1, -1)
     used_cols = {(x, z) for (x, y, z) in D if y > spec.G}
     managed = {(x, z) for (x, z) in site if bx0 <= x <= bx1 and bz0 <= z <= bz1} | used_cols
@@ -307,7 +307,7 @@ def main(argv):
             print(f"{label}の面: 面全体 {hi - lo + 1} マス（左の角からの k が {lo}〜{hi}）、"
                   f"そのうち一番長いまっすぐな壁 {f.width} マス（k が 0〜{f.width - 1}）")
     elif cmd in ("capture", "diff", "export"):   # 正解の保存先（既定は builds/<設計名>/answer.json）
-        path = Path(argv[2]) if len(argv) > 2 else HERE / "builds" / name / "answer.json"
+        path = Path(argv[2]) if len(argv) > 2 else config.work("builds", name, "answer.json")
         {"capture": capture, "diff": diff, "export": export}[cmd](spec, geo, site, path)
     elif cmd in ("build", "reset") and os.environ.get("REMODEL_WORLD"):
         sys.exit("REMODEL_WORLD はプレビュー専用です（施工はサーバーのワールドだけ）")

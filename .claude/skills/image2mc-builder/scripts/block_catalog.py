@@ -29,11 +29,11 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from block_colors import JAR, _TINT, rgb_to_lab
+import config
+from block_colors import _TINT, _jar, rgb_to_lab
 
-HERE = Path(__file__).resolve().parent
-CATALOG = HERE / "block_catalog.json"
-OUT = HERE / "out"
+CATALOG = config.work("block_catalog.json")   # 作業フォルダ（使う人の Minecraft の版で作る）
+OUT = config.work("out")
 FONT = "C:/Windows/Fonts/BIZ-UDGothicR.ttc"
 _FOLIAGE = (0.38, 0.6, 0.2)  # 葉はバイオームの緑が掛かる（桜・ツツジ・ペールオークは掛からない）
 _NO_TINT_LEAVES = ("cherry_leaves", "azalea_leaves", "flowering_azalea_leaves", "pale_oak_leaves")
@@ -117,7 +117,7 @@ def dominant(px):
 
 
 def build():
-    z = zipfile.ZipFile(JAR)
+    z = _jar()
     cat = {}
     for n in sorted(z.namelist()):
         if not (n.startswith("assets/minecraft/blockstates/") and n.endswith(".json")):
@@ -182,7 +182,7 @@ def _html(z, cat):
 <script>const q=document.getElementById('q'),f=document.getElementById('f');
 function u(){{for(const t of document.querySelectorAll('.t'))t.style.display=(t.dataset.n.includes(q.value)&&(!f.checked||!t.classList.contains('part')))?'':'none'}}
 q.oninput=u;f.onchange=u;</script>"""
-    OUT.mkdir(exist_ok=True)
+    OUT.mkdir(parents=True, exist_ok=True)
     (OUT / "block_catalog.html").write_text(html, encoding="utf-8")
     print(f"一覧 → {OUT / 'block_catalog.html'}")
 
@@ -190,7 +190,7 @@ q.oninput=u;f.onchange=u;</script>"""
 def sample_uri(block, side=48):
     """一覧表と同じ見本の画像（側面のテクスチャ、data URI）。質問のフォームにブロックの見本を出すのに使う。
     ハーフ（_slab）は下半分だけにして、薄さが分かるようにする。"""
-    z = zipfile.ZipFile(JAR)
+    z = _jar()
     e = load()[block]
     img = Image.open(io.BytesIO(z.read(f"assets/minecraft/textures/block/{e['side']}.png"))).convert("RGBA")
     img = img.crop((0, 0, img.width, img.width)).resize((side, side), Image.NEAREST)
@@ -230,7 +230,7 @@ def nearest(rgb, n=8, full_only=True, like=None):
 def match(photo, x0, y0, x1, y1, n=8, like=None):
     """写真の範囲 → その範囲で一番多い色 と、近いブロックのテクスチャを並べた絵（out/match_*.png）。
     like を渡すと名前にそれを含むブロックだけで比べる（例: "bricks" で模様をレンガに絞って色を選ぶ）。"""
-    z = zipfile.ZipFile(JAR)
+    z = _jar()
     crop = Image.open(photo).convert("RGB").crop((x0, y0, x1, y1))
     dom, share = dominant(np.asarray(crop, dtype=np.float32).reshape(-1, 3))
     hits = nearest(dom, n, like=like)
@@ -248,7 +248,7 @@ def match(photo, x0, y0, x1, y1, n=8, like=None):
         sheet.paste(img.crop((0, 0, img.width, img.width)).resize((S, S), Image.NEAREST), (x, 0))
         d.text((x, S + 6), b, fill="black", font=font)
         d.text((x, S + 24), f"差 {dist}", fill="gray", font=font)
-    OUT.mkdir(exist_ok=True)
+    OUT.mkdir(parents=True, exist_ok=True)
     path = OUT / f"match_{Path(photo).stem}_{x0}_{y0}{'_' + like if like else ''}.png"
     sheet.save(path)
     print(f"写真の色 {_hex(dom)}（範囲の {round(share * 100)}%）")

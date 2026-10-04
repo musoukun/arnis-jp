@@ -39,7 +39,7 @@
       "tools": [
         "Read"
       ],
-      "path": "remodel[\\\\/]out[\\\\/].*\\.(png|jpe?g|webp)$"
+      "path": "image2mc[\\\\/]out[\\\\/].*\\.(png|jpe?g|webp)$"
     },
     {
       "name": "写真・画像を見る",
@@ -119,7 +119,7 @@
       "tool_pattern": "^(mcp__|WebSearch|WebFetch|ToolSearch|Agent|Skill|Artifact)"
     }
   ],
-  "visual_check": "remodel[\\\\/]out[\\\\/]",
+  "visual_check": "image2mc[\\\\/]out[\\\\/]",
   "goals": {
     "corrections": {
       "target": 0,
@@ -200,7 +200,7 @@
     "gusto"
   ],
   "library": {
-    "path": "tools/remodel/parts.py",
+    "path": ".claude/skills/image2mc-builder/scripts/parts.py",
     "module": "parts",
     "internal": [
       "build",
@@ -212,7 +212,7 @@
     ]
   },
   "code": {
-    "dir": "tools/remodel/designs",
+    "dir": "image2mc/designs",
     "library": "parts",
     "manual_calls": [
       "put"
@@ -230,7 +230,7 @@
     }
   },
   "compare": {
-    "command": "python tools/remodel/run.py {name} diff .claude/skills/image2mc-builder/examples/kfc_kitahanada/answer_v2.json",
+    "command": "python .claude/skills/image2mc-builder/scripts/run.py {name} diff .claude/skills/image2mc-builder/examples/kfc_kitahanada/answer_v2.json",
     "default_name": "kfc_test",
     "metrics": {
       "diff_cells": "違い: (\\d+) マス"

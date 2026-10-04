@@ -13,9 +13,9 @@ Minecraft のブロックは現実の部品より粗い（どんなに細い部�
 
 import json
 
-from world_reader import WORLD
+import config
 
-WORLD_SCALE = json.loads((WORLD / "world_mapping.json").read_text(encoding="utf-8"))["scale"]
+WORLD_SCALE = json.loads((config.world() / "world_mapping.json").read_text(encoding="utf-8"))["scale"]
 MIN_SHOP_GROUND_FLOOR = 5   # 店舗の1階（地面〜軒・帯の上端）
 MIN_UPPER_FLOOR = 4         # 2階以上の1階分
 ROOF_RISE_OVER_PILLAR = 3   # 寄棟・切妻: 頂部 = 柱 + 3

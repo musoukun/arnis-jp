@@ -1,12 +1,12 @@
 # 部品の早見表（parts.py）
 
-`python tools/remodel/parts_ref.py` で parts.py から自動で作る（手で直さない）。**設計を書く時は、parts.py のコードを読まずにこの表を見る。**
+`python scripts/parts_ref.py`（スキルのフォルダで）で parts.py から自動で作る（手で直さない）。**設計を書く時は、parts.py のコードを読まずにこの表を見る。**
 どのブロックで作るかは [部位の辞書](recipes.md)、どの部品で置くかはこの表。
 
-## 設計のフォルダの型（designs/_parts_template/）
+## 設計のフォルダの型（スキルの assets/parts_template/）
 
-新しい建物は **`tools/remodel/designs/_parts_template/` をフォルダごと `designs/<建物名>/` にコピー**し、★ を全部埋める（既定は空。何を選ぶかは [辞書](recipes.md)の「手札」）。
-建物を部位ごとのファイル（パーツ）に分け、パーツは Sonnet の Agent が1つずつ並列に書く。組み立ては `__init__.py`（`tools/remodel/assemble.py`）が自動でやる。
+新しい建物は **スキルの `assets/parts_template/` をフォルダごと作業フォルダの `designs/<建物名>/` にコピー**し、★ を全部埋める（既定は空。何を選ぶかは [辞書](recipes.md)の「手札」）。
+建物を部位ごとのファイル（パーツ）に分け、パーツは Sonnet の Agent が1つずつ並列に書く。組み立ては `__init__.py`（`scripts/assemble.py`）が自動でやる。
 
 | ファイル | だれが書く | 中身 |
 |---|---|---|
@@ -43,7 +43,7 @@
 | `c.put(x, y, z, ブロック)` | 1マス置く（部品で置けない物だけ。飾りは自動で最後に取り付ける） |
 | `parts.STEP` | 向き → 外への1マス `{"n": (0,-1), "s": (0,1), "w": (-1,0), "e": (1,0)}` |
 
-## 看板の絵（tools/remodel/sign_art.py）
+## 看板の絵（scripts/sign_art.py）
 
 店の顔（ロゴ・店名・壁の看板・立て看板・ポスター）は**必ず地図アート**にする。
 **写真から看板の中身（文字・色・形・配置）を読み取り、次の型で描く**（写真を切り抜かない。斜め・小さい・反射でぼやけるため）。
@@ -67,9 +67,24 @@
 
 ## 部品
 
-### `building_cells(geo, way, scale=0.9285714285714287)`
+### `world_scale(geo) -> float`
 
-OSM の建物の形（ワールドの縮尺 1.4）を、真ん中を中心に scale 倍に縮めてマスにする。設計の footprint(geo) で使う。
+このワールドの倍率（world_mapping.json の scale）。
+
+### `building_scale(geo) -> float`
+
+再現する建物の幅と奥行きの縮め方。建物は「倍率 − 0.1」で作る（ユーザー 2026-10-04「実際見てみて 0.1 引いた
+くらいがちょうどよい」）。道路・敷地はワールドの倍率のまま、建物の形だけを真ん中から (倍率 − 0.1) / 倍率 に縮める
+（1.4 なら 1.3/1.4）。倍率が 1 以下なら縮めない。
+
+### `lane_blocks(geo, lanes: int = 1) -> int`
+
+車線 lanes 本ぶんの幅（マス）。駐車場の入口（対面通行なら 2 車線）・ドライブスルーの通路（1 車線）に使う。
+
+### `building_cells(geo, way, scale=None)`
+
+OSM の建物の形（ワールドの倍率で広がっている）を、真ん中を中心に scale 倍（既定は building_scale）に縮めてマスにする。
+設計の footprint(geo) で使う。
 
 ### `grow_footprint(cells, shift=(0, 0), grow=None, straighten=())`
 

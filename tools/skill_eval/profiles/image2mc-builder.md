@@ -12,10 +12,10 @@ image2mc-builder スキルのテストです。写真1枚から「<建物名>」
 ■ 入力: 写真 <写真のパス>（見た目の入力はこれだけ）、OSM の way <way ID か「店名から探す」>
 ■ 位置の指示: <人が最初から伝える位置の直し。無ければこの行を消す。KFC は下の「KFC で足す指示」>
 ■ 最初に .claude/skills/image2mc-builder/SKILL.md と recipes.md を全部読み、その手順どおりに進める
-■ 見てはいけないもの: tools/remodel/designs/ にある既存の設計と、.claude/skills/image2mc-builder/examples/ の画像
-  （KFC 以外の建物なら、正解のサンプル designs/kfc_kitahanada_v2.py を完成例として読んでよい）
+■ 見てはいけないもの: 作業フォルダ image2mc/designs/ にある既存の設計と、.claude/skills/image2mc-builder/examples/ の画像
+  （KFC 以外の建物なら、正解のサンプル .claude/skills/image2mc-builder/examples/kfc_kitahanada/design_v2.py を完成例として読んでよい）
 ■ 分からない所は、スキルの「0. 聞いてから作る」どおりに私に質問する（質問の仕方もテストの対象）
-■ 設計は tools/remodel/designs/<設計名>/ のフォルダに書き（スキルの Step 3）、preview・section・check を見て、プレビューの絵を私に見せて OK をもらってから build する
+■ 設計は作業フォルダの image2mc/designs/<設計名>/ のフォルダに書き（スキルの Step 3）、preview・section・check を見て、プレビューの絵を私に見せて OK をもらってから build する
 ■ 共有の道具（parts.py・run.py・checks.py・builder.py）とスキルのファイルは書き換えない。足りない部品は extras の中で作り「部品の不足」として報告する
 ■ check の警告で build が止まったら設計を直す（force は使わない）。git の commit・push はしない
 ■ 判断ごとに、使ったスキルの記述を「根拠: 〜」の形で書く（部位表の根拠の欄・設計ファイルのコメント・報告）。書き方は次のどれか:
@@ -74,7 +74,7 @@ KFC と別の建物で同じ数字を並べると、KFC だけ良い所が「KFC
 
 1回の改善は、次の8つの手順で回す。速いモデル（Sonnet）で一発で建つことを目指す。
 
-1. **版を残す**: スキル・道具（`tools/remodel/*.py`）・型・正解の設計を zip にして `tools/skill_eval/versions/` に置く
+1. **版を残す**: スキルのフォルダ（`.claude/skills/image2mc-builder/`。道具・型・正解の設計を含む）を zip にして `tools/skill_eval/versions/` に置く
    （`image2mc-builder_<日時>_<何の前か>.zip`。git には入れない）。いつでも前の版に戻れるようにする
 2. **テストする（Sonnet のサブエージェント）**: 渡すのは写真1枚・OSM の way 番号・スキルの3つのファイルだけ。
    答えになる設計（正解・前のテストの設計）・お手本の画像・既存のプレビューは見せない。設計名は `kfc_test<番号>`。

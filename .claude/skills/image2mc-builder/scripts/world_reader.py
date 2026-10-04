@@ -13,9 +13,9 @@ from pathlib import Path
 
 import nbtlib
 
-ROOT = Path(__file__).resolve().parents[2]
-# 既定はサーバーのワールド。REMODEL_WORLD で別のワールド（バックアップ等）を読める（preview 専用）
-WORLD = Path(os.environ.get("REMODEL_WORLD") or ROOT / "minecraft-server" / "world")
+import config
+
+# 既定は設定のサーバーのワールド（config.world()）。REMODEL_WORLD で別のワールド（バックアップ等）を読める（preview 専用）
 
 
 def _state_string(entry) -> str:
@@ -82,8 +82,9 @@ class WorldSnapshot:
         return self.blocks.get((x, y, z), "minecraft:air")
 
 
-def load_area(x0, z0, x1, z1, y0=-64, y1=-30, world: Path = WORLD) -> WorldSnapshot:
-    """x0..x1, z0..z1, y0..y1（両端含む）の範囲を読む。"""
+def load_area(x0, z0, x1, z1, y0=-64, y1=-30, world: Path = None) -> WorldSnapshot:
+    """x0..x1, z0..z1, y0..y1（両端含む）の範囲を読む。world を省くと設定のワールド。"""
+    world = world or config.world()
     blocks = {}
     for cx in range(x0 >> 4, (x1 >> 4) + 1):
         for cz in range(z0 >> 4, (z1 >> 4) + 1):

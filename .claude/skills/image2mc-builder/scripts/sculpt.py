@@ -25,10 +25,11 @@ from PIL import Image, ImageDraw, ImageFont
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from parcel import ROOT, OsmGeometry, cells_in, outline  # noqa: E402
+import config  # noqa: E402
+from parcel import OsmGeometry, cells_in, outline  # noqa: E402
 from photo_camera import Camera, solve  # noqa: E402
 
-OUT = HERE / "out" / "sculpt"
+OUT = config.work("out", "sculpt")   # 作業フォルダの out/sculpt/
 PASSES = ["blockout", "form", "material", "detail"]
 STEP = {"n": (0, -1), "s": (0, 1), "w": (-1, 0), "e": (1, 0)}
 FACING = {"n": "north", "s": "south", "w": "west", "e": "east"}
@@ -57,7 +58,8 @@ class Frame:
     """建物の局所座標の枠。OSM の形、地面 G、局所 ↔ ワールドの変換。"""
 
     def __init__(self, spec, geo=None, G=None):
-        self.geo = geo or OsmGeometry(ROOT / spec.get("osm", "doc/kitahanada/osm_data.json"))
+        # 仕様に "osm" があればそれ（作業を始めたフォルダからのパス）、無ければ設定の OSM データ
+        self.geo = geo or OsmGeometry(config.path_of(spec["osm"]) if spec.get("osm") else None)
         self.poly = self.geo.polygon(spec["way"])
         self.bld = cells_in(self.poly)
         self.x0 = min(x for x, _ in self.bld)
@@ -217,7 +219,7 @@ def solve_camera(spec, fr, size):
 
 def sheet(spec, upto="blockout"):
     fr = Frame(spec)
-    photo = Image.open(ROOT / spec["photo"]).convert("RGB")
+    photo = Image.open(config.path_of(spec["photo"])).convert("RGB")
     if "solved" not in spec.get("camera", {}):
         solve_camera(spec, fr, photo.size)
     cam = camera(spec, photo.size)
@@ -268,7 +270,7 @@ def sheet(spec, upto="blockout"):
 def measure(spec, u, v, where):
     """写真の画素が、面（n/s/w/e の壁の面）か角（NW 等の縦の線）の上にあるとして、局所座標と段を返す。"""
     fr = Frame(spec)
-    photo = Image.open(ROOT / spec["photo"])
+    photo = Image.open(config.path_of(spec["photo"]))
     cam = camera(spec, photo.size)
     if where in STEP:
         a, b = fr.face_line(where)
@@ -290,6 +292,6 @@ if __name__ == "__main__":
         measure(load(a[1]), float(a[2]), float(a[3]), a[4])
     elif a[0] == "solve":
         s = load(a[1]); s.get("camera", {}).pop("solved", None)
-        fr = Frame(s); solve_camera(s, fr, Image.open(ROOT / s["photo"]).size); print(s["camera"]["solved"])
+        fr = Frame(s); solve_camera(s, fr, Image.open(config.path_of(s["photo"])).size); print(s["camera"]["solved"])
     else:
         print(__doc__)

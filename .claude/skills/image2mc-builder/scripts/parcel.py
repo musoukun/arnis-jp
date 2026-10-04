@@ -8,7 +8,7 @@
 import json
 from pathlib import Path
 
-from world_reader import ROOT, WORLD
+import config
 
 
 def point_in_polygon(x, z, poly) -> bool:
@@ -80,7 +80,10 @@ def distance_inward(cells: set) -> dict:
 class OsmGeometry:
     """arnis が保存した OSM JSON から、way のポリゴンを Minecraft 座標で取り出す。"""
 
-    def __init__(self, osm_json: Path, world: Path = WORLD):
+    def __init__(self, osm_json: Path = None, world: Path = None):
+        """osm_json・world を省くと設定（config.json）の OSM データとワールド。"""
+        osm_json = osm_json or config.osm_json()
+        world = world or config.world()
         m = json.loads((world / "world_mapping.json").read_text(encoding="utf-8"))
         self.m = m
         els = json.loads(osm_json.read_text(encoding="utf-8"))["elements"]

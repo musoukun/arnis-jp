@@ -14,16 +14,16 @@ from pathlib import Path
 
 from mcrcon import MCRcon
 
+import config
 from world_reader import load_area
 
-ROOT = Path(__file__).resolve().parents[2]
-BUILDS = Path(__file__).resolve().parent / "builds"
-RCON = ("127.0.0.1", "arnis2026", 25575)
+BUILDS = config.work("builds")   # 作業フォルダの builds/（スキルのフォルダには書かない）
 AIR = "minecraft:air"
 
 
 def rcon():
-    host, pw, port = RCON
+    """サーバーの RCON。場所とパスワードは設定のサーバーの server.properties から毎回読む。"""
+    host, pw, port = config.rcon()
     return MCRcon(host, pw, port=port)
 
 

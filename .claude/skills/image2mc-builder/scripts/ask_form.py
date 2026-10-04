@@ -37,6 +37,8 @@ import json
 import sys
 from pathlib import Path
 
+import config
+
 HERE = Path(__file__).resolve().parent
 
 CSS = """
@@ -86,6 +88,7 @@ function send(){
   const extra=document.getElementById('o_all').value.trim();
   sendPrompt(`${TITLE} の答え: ${parts.join(' / ')}${extra?' / そのほか: '+extra:''}`);
 }
+document.querySelectorAll('.map[data-grid]').forEach(m=>{ const L=Q[+m.dataset.q].legend; m.dataset.grid.split('|').forEach(r=>[...r].forEach(ch=>m.appendChild(cell(L[ch])))); });
 Q.forEach(q=>{ if(q.type==='slider'){ const s=document.getElementById('s_'+q.i); s.oninput=()=>drawWall(q,+s.value); drawWall(q,+s.value);} });
 """
 
@@ -127,9 +130,9 @@ def question(i, q):
         for o in q["options"]:
             grid = o.get("grid", [])
             cols = max((len(r) for r in grid), default=0)
-            cells = "".join(f'<div style="background-image:var(--t-{q["legend"][ch]})"></div>' if ch in q["legend"]
-                            else "<div></div>" for r in grid for ch in r.ljust(cols, "."))
-            pic = f'<div class="map" style="--c:16px; grid-template-columns:repeat({cols},16px)">{cells}</div>' if grid else ""
+            # マスは JS で描く（1マスずつ <div> を書き出すと HTML が数百 KB になり、チャットに出せない）
+            pic = (f'<div class="map" data-q="{i}" data-grid="{esc("|".join(r.ljust(cols, ".") for r in grid))}" '
+                   f'style="--c:{max(6, min(16, 400 // cols))}px; grid-template-columns:repeat({cols},{max(6, min(16, 400 // cols))}px)"></div>') if grid else ""
             sel = " sel" if str(o["value"]) == str(q.get("guess")) else ""
             opts.append(f'<button type="button" class="opt{sel}" onclick=\'pick({i},this,{json.dumps(o["value"])})\'>'
                         f'<b>{esc(o.get("label", o["value"]))}</b><div class="sub">{esc(o.get("sub", ""))}</div>{pic}'
@@ -167,12 +170,21 @@ def build(spec):
             f'<button type="button" class="send" onclick="send()">答えを送る</button></div><script>{js}</script>')
 
 
+MAX_KB = 50       # ウィジェットに出すフォームの大きさの目安
+MAX_DIVS = 300    # マス・繰り返しは JS で描く。<div> がこれを超えたら書き出し方を見直す
+
+
 def main(path):
     spec = json.loads(Path(path).read_text(encoding="utf-8"))
-    out = HERE / "out" / f"ask_{Path(path).stem}.html"
-    out.parent.mkdir(exist_ok=True)
-    out.write_text(build(spec), encoding="utf-8")
-    print(f"質問 {len(spec['questions'])} 個 → {out}（中身を show_widget の widget_code に渡す）")
+    out = config.work("out", f"ask_{Path(path).stem}.html")   # 作業フォルダの out/
+    out.parent.mkdir(parents=True, exist_ok=True)
+    html_text = build(spec)
+    out.write_text(html_text, encoding="utf-8")
+    # 大きいフォームはウィジェットに出せない・書き出しが遅い（マスを <div> で書いて 126KB になり失敗した 2026-10-05）
+    kb, divs = len(html_text.encode("utf-8")) / 1024, html_text.count("<div")
+    print(f"質問 {len(spec['questions'])} 個 → {out}（{kb:.0f}KB、<div> {divs} 個。中身を本体が show_widget の widget_code に渡す）")
+    if kb > MAX_KB or divs > MAX_DIVS:
+        sys.exit(f"大きすぎます（目安 {MAX_KB}KB・<div> {MAX_DIVS} 個）。質問を分けるか、図を小さくしてください")
 
 
 if __name__ == "__main__":

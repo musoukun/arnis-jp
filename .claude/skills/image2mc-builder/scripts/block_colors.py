@@ -15,7 +15,8 @@ from functools import lru_cache
 import numpy as np
 from PIL import Image
 
-JAR = os.path.expandvars(r"%APPDATA%\.minecraft\versions\1.21.11\1.21.11.jar")
+import config
+
 TEX = "assets/minecraft/textures/block/"
 
 # 形状系サフィックス → 元素材（stairs/slab などは素材テクスチャを使う）
@@ -50,7 +51,8 @@ _TINT = {"grass_block_top": (0.49, 0.74, 0.35), "short_grass": (0.49, 0.74, 0.35
 
 @lru_cache(maxsize=1)
 def _jar():
-    return zipfile.ZipFile(JAR)
+    """テクスチャを読む Minecraft 本体の jar（設定の minecraft_jar）。"""
+    return zipfile.ZipFile(config.minecraft_jar())
 
 
 @lru_cache(maxsize=1)

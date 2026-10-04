@@ -39,12 +39,12 @@
 ## 各 Agent に渡す依頼文（行ごとに <…> を埋める）
 ```text
 image2mc-builder の建物のパーツを1つ書いてください。回答は日本語で。
-■ 読む: tools/remodel/designs/<建物名>/plan.md と base.py、.claude/skills/image2mc-builder/parts.md（部品の早見表）、
+■ 読む: 作業フォルダの image2mc/designs/<建物名>/plan.md と base.py、スキルの references/parts.md（部品の早見表）、
   recipes.md の「<部位の見出し>」、写真 <パス>（<見る所: 例 北の面・左上の看板>）
-■ 書く: tools/remodel/designs/<建物名>/<ファイル> だけ。受け持ち: <表の行をそのまま>
+■ 書く: image2mc/designs/<建物名>/<ファイル> だけ。受け持ち: <表の行をそのまま>
   ほかのファイル（base.py・plan.md・ほかのパーツ・parts.py などの道具）は書き換えない
 ■ 形: 書き方の例 designs/<建物名>/_example_part.py と同じ（ORDER・part(c)・signs(geo, c)・BACKING・images() の使う物だけ）
-■ 確かめ: cd tools/remodel して REMODEL_ONLY=<p_ を除いた名前> python run.py <建物名> preview <名前> と check。絵を1回見て、写真と比べる
+■ 確かめ: REMODEL_ONLY=<p_ を除いた名前> python <スキル>/scripts/run.py <建物名> preview <名前> と check（作業を始めたフォルダで）。絵を1回見て、写真と比べる
 ■ 報告（短く）: 書いたファイル、置いた物の数を部位表の数と並べた表、迷った所
 ```
 
