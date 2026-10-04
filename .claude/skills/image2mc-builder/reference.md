@@ -3,9 +3,12 @@
 [SKILL.md](SKILL.md) の手順の途中で、準備・トラブル・道具の一覧・正解例が要る時だけ開く。
 
 ## 準備
-- ワールドは **縮尺 1.4** で生成する（法則1）:
+- ワールドは **倍率 1.4**（既定。GUI なら「体感リアルサイズ」をオン）で生成する（法則1）:
   `arnis --bbox "<南,西,北,東>" --file <OSM JSON> --gsi --plateau --scale 1.4 --output-dir <出力>`。
-  生成直後のワールドのコピーは捨てない（控えの追加に使う）。`world_mapping.json` の `scale` が 1.4 か確認する
+  生成直後のワールドのコピーは捨てない（控えの追加に使う）。
+- **ワールド倍率は実行のたびに確かめる（必須）**: `run.py` が毎回 `world_mapping.json` の `scale` と、
+  それに合わせた建物の幅・奥行き（倍率 − 0.1）・1車線・駐車場入口のマス数を表示する。1.4 以外なら止まるので、
+  ユーザーに「倍率 ◯ で作ってよいか」を聞き、よければ `REMODEL_SCALE=<倍率>` を付けて実行し直す
 - サーバー: `minecraft-server/`（1.21.11、RCON `127.0.0.1:25575` / `arnis2026`）。ユーザーのターミナルで起動する
   （Claude の裏の実行は2時間で止まる）: `cd D:\develop\arnis-jp\minecraft-server; java -Xms2G -Xmx8G -jar server.jar nogui`
 - 1.21.11 のゲームルール名は新形式（昼の固定は `gamerule advance_time false`）

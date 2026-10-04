@@ -139,13 +139,42 @@ def sign_cells(sign):
 
 # ---------------- 建物の形を整える ----------------
 
-# 再現する建物の幅と奥行きは、ワールドの縮尺 1.4 ではなく 1.3 で作る（ユーザー 2026-10-04「実際見てみて 0.1 引いた
-# くらいがちょうどよい」）。道路・敷地は 1.4 のまま、建物の形だけを真ん中から 1.3/1.4 に縮める
-BUILDING_SCALE = 1.3 / 1.4
+# ワールド倍率（arnis --scale。world_mapping.json の scale）。既定はユーザーの黄金比 1.4。
+# 実行のたびに run.py が読んで表示し、1.4 以外ならユーザーに確かめるまで止まる。
+DEFAULT_WORLD_SCALE = 1.4
 
 
-def building_cells(geo, way, scale=BUILDING_SCALE):
-    """OSM の建物の形（ワールドの縮尺 1.4）を、真ん中を中心に scale 倍に縮めてマスにする。設計の footprint(geo) で使う。"""
+def world_scale(geo) -> float:
+    """このワールドの倍率（world_mapping.json の scale）。"""
+    return float(geo.m.get("scale", 1.0))
+
+
+def building_scale(geo) -> float:
+    """再現する建物の幅と奥行きの縮め方。建物は「倍率 − 0.1」で作る（ユーザー 2026-10-04「実際見てみて 0.1 引いた
+    くらいがちょうどよい」）。道路・敷地はワールドの倍率のまま、建物の形だけを真ん中から (倍率 − 0.1) / 倍率 に縮める
+    （1.4 なら 1.3/1.4）。倍率が 1 以下なら縮めない。"""
+    s = world_scale(geo)
+    return (s - 0.1) / s if s > 1.0 else 1.0
+
+
+# 車線の幅（ユーザー 2026-10-05「ワールド倍率 1.4 で片側1車線は 6 マスがかなり体感に近い」）。
+# arnis 本体の道路（「道路の幅を広げる」）と同じ式: 日本の一般道の車線 3.25m × 倍率 × (倍率 − 0.1)。
+# 1.4 で 5.9 → 6 マス、1.3 で 5.1 → 5 マス（四捨五入）。
+LANE_REAL_M = 3.25
+
+
+def lane_blocks(geo, lanes: int = 1) -> int:
+    """車線 lanes 本ぶんの幅（マス）。駐車場の入口（対面通行なら 2 車線）・ドライブスルーの通路（1 車線）に使う。"""
+    s = world_scale(geo)
+    ratio = max(s - 0.1, 1.0) if s > 1.0 else 1.0
+    return max(1, round(LANE_REAL_M * s * ratio * lanes))
+
+
+def building_cells(geo, way, scale=None):
+    """OSM の建物の形（ワールドの倍率で広がっている）を、真ん中を中心に scale 倍（既定は building_scale）に縮めてマスにする。
+    設計の footprint(geo) で使う。"""
+    if scale is None:
+        scale = building_scale(geo)
     poly = geo.polygon(way)
     cx, cz = sum(p[0] for p in poly) / len(poly), sum(p[1] for p in poly) / len(poly)
     return cells_in([(cx + (x - cx) * scale, cz + (z - cz) * scale) for x, z in poly])

@@ -59,9 +59,21 @@ def detect_ground(geo, spec, site) -> int:
     return Counter(top.values()).most_common(1)[0][0]
 
 
+def check_world_scale(geo):
+    """ワールド倍率を毎回表示する。既定の 1.4 でなければ、ユーザーに確かめて REMODEL_SCALE=<倍率> を付けるまで止める
+    （建物の縮め方・車線の幅・質問の大きさがすべて倍率で変わるため）。"""
+    s = parts.world_scale(geo)
+    print(f"ワールド倍率 = {s:g}（建物の幅・奥行き = {s - 0.1 if s > 1 else s:g} 倍、1車線 = {parts.lane_blocks(geo)} マス、"
+          f"対面通行の駐車場入口 = {parts.lane_blocks(geo, 2)} マス）")
+    if s != parts.DEFAULT_WORLD_SCALE and os.environ.get("REMODEL_SCALE") != f"{s:g}":
+        sys.exit(f"ワールド倍率が {s:g} です（既定は {parts.DEFAULT_WORLD_SCALE:g}）。この倍率で作ってよいかユーザーに確かめ、"
+                 f"よければ REMODEL_SCALE={s:g} を付けて実行し直してください")
+
+
 def load(name: str):
     spec = importlib.import_module(name)
     geo = OsmGeometry(OSM_JSON)
+    check_world_scale(geo)
     site = spec.site_cells(geo)
     spec.G = detect_ground(geo, spec, site)
     print("地面 G =", spec.G)
