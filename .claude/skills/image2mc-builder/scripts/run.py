@@ -197,9 +197,14 @@ def export(spec, geo, site, path):
 def diff(spec, geo, site, path):
     """設計と正解（capture）の違い。何をどう手直しされたかを、ブロックの組み合わせごとに数える。"""
     ans = json.loads(path.read_text(encoding="utf-8"))
-    A = {tuple(map(int, k.split(","))): s for k, s in ans["blocks"].items()}
+    dG = spec.G - ans.get("G", spec.G)              # 正解を取ったときと今とで地面の高さが違えば、地面からの段でそろえる
+    A = {(x, y + dG, z): s for (x, y, z), s in ((tuple(map(int, k.split(","))), s) for k, s in ans["blocks"].items())}
+    ans["frames"] = {f"{x},{y + dG},{z}": v for (x, y, z), v in
+                     ((tuple(map(int, k.split(","))), v) for k, v in (ans.get("frames") or {}).items())}
     D = checks.design(spec, geo)
-    y0, y1 = ans["y"]
+    y0, y1 = (y + dG for y in ans["y"])
+    if dG:
+        print(f"正解を取ったときの地面 {ans['G']} と今の地面 {spec.G} が違うので、{dG:+d} 段ずらして比べます")
     skip = other_buildings(spec, geo)
 
     def key(s):
@@ -211,7 +216,7 @@ def diff(spec, geo, site, path):
             if m and (prop != "facing" or "stairs" in n or "piston" in n) and (prop, m.group(1)) != ("hanging", "false"):
                 n += f"[{prop}={m.group(1)}]"
         return n
-    pairs, cells = Counter(), {}
+    pairs, cells, filled = Counter(), {}, 0   # filled: 設計か正解のどちらかにブロックがあるマス（一致の割合の分母）
     door = {(x, z) for (x, y, z, st) in parts.build(spec, geo).ordered}   # 自動扉の動く所（開け閉めで変わる）
     door |= {(x + dx, z + dz) for (x, z) in door for dx in (-1, 0, 1) for dz in (-1, 0, 1)}
     # 施工が管理している範囲（控えの範囲か、設計が地面より上に何か置く列）だけ比べる。外は元からある物
@@ -224,15 +229,29 @@ def diff(spec, geo, site, path):
             d, a = key(D.get((x, y, z))), key(A.get((x, y, z)))
             if y == spec.G and (x, y, z) not in D:
                 continue                          # 地面で設計に無い所は元の地面
+            filled += d != "air" or a != "air"    # 空気どうしのマスは数えない（数えると一致の割合が水増しされる）
             if d != a:
                 pairs[(d, a)] += 1
                 cells.setdefault((d, a), []).append((x, y - spec.G, z))
     for k, v in (ans.get("frames") or {}).items():         # 看板: 設計にある額縁が、正解で外されているか
         x, y, z = map(int, k.split(","))
+        if D.get((x, y, z)) == checks.SIGN or v is not None:
+            filled += 1
         if v is None and D.get((x, y, z)) == checks.SIGN:
             pairs[("看板の額縁", "air")] += 1
             cells.setdefault(("看板の額縁", "air"), []).append((x, y - spec.G, z))
-    print(f"違い: {sum(pairs.values())} マス（設計 → 正解）")
+    n = sum(pairs.values())
+    # 建っている場所（上から見たマス）が重なっているか。重なりが少なければ、正解を取ったあとで
+    # ワールドや建物の倍率が変わったなどで条件が違うので、マスの比較は意味が無い（数字を出すと実際より悪く見える）
+    cols_d = {(x, z) for (x, y, z), s in D.items() if y > spec.G and checks.name(s) != "air" and (x, z) in site}
+    cols_a = {(x, z) for (x, y, z), s in A.items() if y > spec.G and checks.name(s) != "air" and (x, z) in site}
+    overlap = len(cols_d & cols_a) / max(len(cols_d | cols_a), 1)
+    if overlap < 0.6:
+        print(f"比べられない: 設計と正解で、建物の場所か大きさが合っていません（上から見た重なり {overlap:.0%}）。"
+              "正解を取ったあとで、ワールドや建物の倍率が変わった可能性があります。絵で見比べるのがおすすめです")
+        return
+    print(f"違い: {n} マス（設計 → 正解）")
+    print(f"一致: {(1 - n / max(filled, 1)) * 100:.1f}%（ブロックのあるマス {filled} のうち、{filled - n} マスが正解と同じ。上から見た重なり {overlap:.0%}）")
     for (d, a), n in pairs.most_common(40):
         ex = cells[(d, a)][:3]
         print(f"  {n:4d}  {d} → {a}   例（x, 地面からの段, z）{ex}")

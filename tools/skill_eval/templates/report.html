@@ -71,6 +71,16 @@ pre{background:var(--soft);padding:10px;border-radius:8px;overflow-x:auto;font-s
 .viewer input[type=range]{width:100%}
 .delta-up{color:var(--warn)} .delta-down{color:var(--good)}
 .empty{color:var(--sub);font-size:13px}
+details.sec{margin-top:6px;border:1px solid var(--line);border-radius:10px;background:var(--card);padding:6px 14px}
+details.sec>summary{list-style:none;cursor:pointer;color:var(--fg)}
+details.sec>summary::-webkit-details-marker{display:none}
+details.sec>summary h2{display:inline;font-size:16px}
+details.sec>summary::before{content:"▶ ";color:var(--sub);font-size:12px}
+details.sec[open]>summary::before{content:"▼ "}
+details.sec[open]{padding-bottom:14px}
+#simpletable td:first-child{font-weight:700;white-space:nowrap}
+#simpletable td.res{min-width:220px}
+#simpletable a{color:var(--info);font-size:12px;white-space:nowrap}
 </style>
 </head>
 <body>
@@ -80,69 +90,54 @@ pre{background:var(--soft);padding:10px;border-radius:8px;overflow-x:auto;font-s
   <div class="meta" id="meta"></div>
 </header>
 <nav id="nav">
-  <a href="#summary">まとめ</a><a href="#analysis">分析と直す候補</a><a href="#flow">処理の流れ</a>
-  <a href="#slow">どこが遅いか</a><a href="#read">どこが読まれたか</a><a href="#goal">正解との比較</a>
-  <a href="#history">前の回と比べる</a><a href="#raw">細かい記録</a>
+  <a href="#simple">今回の結果</a><a href="#flowmap">スキルの流れと時間</a><a href="#flow">時間の順の流れ</a>
+  <a href="#slow">どの作業が遅いか</a><a href="#goal">正解との比較</a><a href="#history">前の回と比べる</a><a href="#raw">細かい記録</a>
 </nav>
 
-<section id="summary">
-  <h2>まとめ（ゴールと現実）</h2>
-  <p class="lead">ゴールはプロファイルの goals。「前の回」は、同じスキルの1つ前のテストとの差。</p>
-  <div class="kpis" id="kpis"></div>
+<section id="simple">
+  <h2>今回の結果と、スキルの直し方</h2>
+  <p class="lead">取れる情報ごとに、今回の結果と、それで何が分かって、スキルをどう直せるか。くわしくは各行の「くわしく」から。</p>
+  <div class="card tbl" id="simpletable"></div>
 </section>
 
-<section id="analysis">
-  <h2>分析と直す候補</h2>
-  <p class="lead">数字から読めることと、スキルや道具をどう直すと速く・正しくなるかの候補。決めつけではなく候補。</p>
-  <div class="findings" id="findings"></div>
+<section id="flowmap">
+  <h2>スキルの流れと時間</h2>
+  <p class="lead">スキルの手順（箱）ごとに、モデルが何分かけたか。色が濃い箱ほど時間が長い手順です。黒の矢印は次の手順へ進んだ所、<b style="color:var(--fix)">赤の破線は前の手順に戻った所（やり直し）</b>で、数字はその矢印を通った回数です。時間は「考えて文を書いていた時間」と「コマンドやファイルの読み書きの時間」の合計で、人の返事待ちは入れていません。</p>
+  <div class="card" id="flowbox"></div>
 </section>
 
-<section id="flow">
-  <h2>処理の流れ</h2>
-  <p class="lead">横が時間（開始からの分）、1行が1つの作業。灰色の帯は人の返事待ち。紫の▼は人の指示、赤の▼は指摘、✕は途中で止めた所。棒に指を置くと中身が出る。</p>
+<h2 style="margin-top:32px;font-size:15px;color:var(--sub)">くわしく見る（押すと開く）</h2>
+
+<section id="flow"><details class="sec"><summary><h2>時間の順の流れ</h2></summary>
+  <p class="lead">横は時間（始めてから何分か）で、1行が1種類の作業です。黄色はモデルが考えて文を書いていた時間、灰色の帯は人の返事を待っていた時間です。紫の▼は人の指示、赤の▼は人に「それは違う」と言われた所、✕は人が途中で止めた所です。棒に指を置くと、何をしていたかが出ます。</p>
   <div class="tools"><span>拡大:</span><button data-zoom="1" class="on">全体</button><button data-zoom="2">2倍</button><button data-zoom="4">4倍</button><button data-zoom="8">8倍</button></div>
   <div class="scroll"><svg id="timeline"></svg></div>
   <div class="legend" id="legend"></div>
   <details><summary>順番の一覧（表）</summary><div class="tbl" id="steps"></div></details>
   <details><summary>見た画像</summary><div class="tbl" id="images"></div></details>
-</section>
+</details></section>
 
-<section id="slow">
-  <h2>どこが遅いか</h2>
-  <p class="lead">作業の種類ごとに、道具が動いていた時間（濃い色）と、その作業の前にモデルが考えていた時間（黄色）。</p>
+<section id="slow"><details class="sec"><summary><h2>どの作業が遅いか</h2></summary>
+  <p class="lead">何をしていたかごとに、コマンドやファイルの読み書きが動いていた時間（濃い色）と、その作業を始める前にモデルが考えていた時間（黄色）です。スキルの言い換えの表（profiles の purposes）に当たらない作業は、その時いた手順の名前で分けています。</p>
   <div class="card bars" id="catbars"></div>
-  <div class="grid2" style="margin-top:12px">
-    <div class="card"><h3 style="font-size:14px;margin:0 0 6px">長く考えた所</h3><div class="tbl" id="moments"></div></div>
-    <div class="card"><h3 style="font-size:14px;margin:0 0 6px">時間のかかった道具</h3><div class="tbl" id="slowtools"></div></div>
-  </div>
-</section>
+  <div class="card" style="margin-top:12px"><h3 style="font-size:14px;margin:0 0 6px">時間のかかった作業（指を置くと、打ったコマンドが出ます）</h3><div class="tbl" id="slowtools"></div></div>
+</details></section>
 
-<section id="read">
-  <h2>どこが読まれたか</h2>
-  <p class="lead">スキルの見出しごとに、判断の根拠（「根拠: 〜」）として使われた回数。使われなかった見出しは、1回で削らず、続けて 0 なら削る候補。</p>
-  <div class="tools"><button data-show="all" class="on">全部</button><button data-show="used">使われた</button><button data-show="never">使われなかった</button></div>
-  <div class="card bars" id="headings"></div>
-  <details id="nonebox"><summary>スキルに書いていない判断（根拠: なし）</summary><div id="none"></div></details>
-</section>
-
-<section id="goal">
-  <h2>正解との比較</h2>
-  <p class="lead">正解との違いの数。絵があるときは「絵を比べる」で、左右・スライダー・違う所の3つの見方で比べられる。</p>
+<section id="goal"><details class="sec"><summary><h2>正解との比較</h2></summary>
+  <p class="lead">建った物と正解を、ブロック1マスずつ比べた一致の割合です（どちらかにブロックがあるマスのうち、同じブロックのマスの割合）。絵があるときは「絵を比べる」で、左右・スライダー・違う所の3つの見方で比べられます。</p>
   <div class="card" id="compare"></div>
-</section>
+</details></section>
 
-<section id="history">
-  <h2>前の回と比べる</h2>
+<section id="history"><details class="sec"><summary><h2>前の回と比べる</h2></summary>
   <p class="lead">同じスキルのテストの一覧。2つ選ぶと、数字を左右に並べて差を出す。</p>
   <div class="card tbl" id="runs"></div>
   <div class="tools" style="margin-top:10px"><span>比べる:</span><select id="runA"></select><span>と</span><select id="runB"></select><button id="runGo">左右に並べる</button></div>
   <div id="runDiff"></div>
-</section>
+</details></section>
 
-<section id="raw">
-  <h2>細かい記録</h2>
+<section id="raw"><details class="sec"><summary><h2>細かい記録</h2></summary>
   <details><summary>Markdown の記録をすべて見る</summary><pre id="markdown"></pre></details>
-</section>
+</details></section>
 </main>
 
 <script>
@@ -151,7 +146,6 @@ const $ = s => document.querySelector(s);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const min = s => (s / 60).toFixed(1);
 const T = (R.data && R.data.time) || {};
-const C = (R.data && R.data.cite) || null;
 const row = R.row || {};
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 
@@ -159,47 +153,106 @@ const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).
 $("#title").textContent = `スキルのテストの記録（${R.profile}）`;
 $("#meta").innerHTML = `開始 ${esc(row.started)} ／ セッション ${esc(row.session)}<br>最初の指示: ${esc(row.prompt)}`;
 
-// ---- まとめ ----
+// ---- 前の回・目標 ----
 const runs = R.history || [];
 const idx = runs.findIndex(r => r.session === row.session);
 const prev = idx > 0 ? runs[idx - 1] : null;
-function delta(key, lowerBetter = true) {
-  if (!prev || prev[key] === undefined || prev[key] === "" || row[key] === undefined) return "";
-  const d = Number(row[key]) - Number(prev[key]);
-  if (!d) return `<span class="sub">前の回と同じ</span>`;
-  const good = lowerBetter ? d < 0 : d > 0;
-  return `<span class="${good ? "delta-down" : "delta-up"}">前の回より ${d > 0 ? "+" : ""}${+d.toFixed(1)}</span>`;
-}
-function goal(key) {
+const has = k => row[k] !== undefined && row[k] !== "";
+function goalOk(key) {
   const g = (R.goals || {})[key];
-  if (!g || row[key] === undefined || row[key] === "") return "";
-  const v = Number(row[key]), t = Number(g.target), ok = (g.better || "lower") === "lower" ? v <= t : v >= t;
-  return `<span class="badge ${ok ? "ok" : "ng"}">ゴール ${t} ${ok ? "達成" : "未達"}</span>`;
+  if (!g || !has(key)) return null;
+  const v = Number(row[key]), t = Number(g.target);
+  return (g.better || "lower") === "lower" ? v <= t : v >= t;
 }
-function kpi(label, value, unit, sub, key, lowerBetter = true, extra = "") {
-  return `<div class="card kpi"><div class="label">${label}</div><div class="value">${value}<small> ${unit}</small></div>
-    <div>${key ? goal(key) : ""}</div><div class="sub">${sub}</div><div class="sub">${key ? delta(key, lowerBetter) : ""}</div>${extra}</div>`;
-}
-const k = [];
-if (T.work !== undefined) {
-  const w = T.work + T.wait || 1;
-  const bar = `<div class="split" title="考える・書く / 道具 / 返事待ち">
-    <span style="width:${T.think / w * 100}%;background:var(--think)"></span>
-    <span style="width:${T.tool / w * 100}%;background:var(--c0)"></span>
-    <span style="width:${T.wait / w * 100}%;background:var(--wait)"></span></div>`;
-  k.push(kpi("作業時間", min(T.work), "分", `考える・書く ${min(T.think)} 分 ／ 道具 ${min(T.tool)} 分 ／ 返事待ち ${min(T.wait)} 分`, "work_min", true, bar));
-}
-k.push(kpi("人の指示", row.prompts ?? "-", "回", `答えた項目 ${row.answer_items ?? 0} 個 ／ 途中で止めた ${row.interrupted ?? 0} 回 ${goal("interrupted")}`, "prompts"));
-k.push(kpi("人からの指摘", row.corrections ?? "-", "個", "一発でできなかった所", "corrections"));
-if (C) k.push(kpi("使われた見出し", C.used.length, `/ ${C.used.length + C.never.length}`, `使われなかった ${C.never.length} 個 ／ 根拠なしの判断 ${row.basis_none ?? 0} 個`, "basis_none"));
-if (row.diff_cells !== undefined) k.push(kpi("正解との違い", Number(row.diff_cells).toLocaleString(), "マス", "", "diff_cells"));
-if (T.tokens !== undefined) k.push(kpi("出力トークン", T.tokens.toLocaleString(), "", "", "output_tokens"));
-$("#kpis").innerHTML = k.join("");
+const table = (head, rows) => `<table><tr>${head.map(h => `<th class="${h[1]||""}">${h[0]}</th>`).join("")}</tr>${rows.join("")}</table>`;
+const F = T.flow;                                     // スキルの手順ごとの時間と、通った順番
+const fsec = s => s.think + s.tool;
 
-// ---- 分析 ----
-$("#findings").innerHTML = (R.findings || []).map(f => `<div class="finding ${f.level}">
-  <div class="t">${esc(f.title)}</div>${f.detail ? `<div class="d">${esc(f.detail)}</div>` : ""}${f.action ? `<div class="a">${esc(f.action)}</div>` : ""}</div>`).join("")
-  || `<p class="empty">分析できる数字がありません</p>`;
+// ---- 今回の結果と、スキルの直し方（一番上の表） ----
+{
+  const mark = ok => ok === null || ok === undefined ? "" : `<span class="badge ${ok ? "ok" : "ng"}">${ok ? "よい" : "直す所あり"}</span> `;
+  const link = id => `<a href="#${id}" data-open="${id}">くわしく</a>`;
+  const fixes = (T.fixes || []).map(f => f.text);
+  const rows = [];
+  if (F) {
+    const all = F.steps.reduce((a, s) => a + fsec(s), 0) || 1;
+    const top = [...F.steps].sort((a, b) => fsec(b) - fsec(a))[0];
+    rows.push(["どの手順に時間がかかったか",
+      `全部で ${min(T.work)} 分。一番長かったのは「${esc(top.name)}」で ${min(fsec(top))} 分（全体の ${Math.round(fsec(top) / all * 100)}%）`,
+      "遅い手順がどこか", "その手順のやり方を、スキルで短くできないか見直す（部品やひな形にする、手順を減らす）", "flowmap", null]);
+    const back = F.edges.filter(e => e.back);
+    const name = id => (F.steps.find(s => s.id === id) || {}).name || id;
+    rows.push(["前の手順に戻った所（やり直し）",
+      back.length ? back.map(e => `「${esc(name(e.from))}」から「${esc(name(e.to))}」へ ${e.n} 回`).join("<br>") : "なし",
+      "一発で進めなかった所", "戻った原因（足りなかった情報や決まり）を、戻る前の手順に書き足す", "flowmap", !back.length]);
+  } else if (T.work !== undefined) {
+    rows.push(["どの手順に時間がかかったか", `全部で ${min(T.work)} 分（スキルの手順が設定に無いので、手順ごとには分けていない）`,
+      "遅い手順がどこか", "設定ファイルの flow にスキルの手順を書くと、手順ごとに分かる", "slow", null]);
+  }
+  rows.push(["人が「それ違う」と言った所",
+    fixes.length ? `${fixes.length} か所（例: ${esc(fixes[0].slice(0, 60))}）` : "なし",
+    "一発でできなかった所", "言われた中身を、スキルの決まりにする", "flow", !fixes.length]);
+  if (row.compare_note) rows.push(["正解との一致", `比べられない: ${esc(row.compare_note)}`,
+    "出来上がりの差", "下の「正解との比較」の絵で見比べる", "goal", null]);
+  else if (has("match_pct")) rows.push(["正解との一致",
+    `${Number(row.match_pct).toFixed(1)}%` + (prev && prev.match_pct ? `（前の回 ${Number(prev.match_pct).toFixed(1)}%）` : ""),
+    "出来上がりの差", "違う所の原因になったスキルの記述を直す", "goal", goalOk("match_pct")]);
+  else if (R.data && R.data.compare) rows.push(["正解との一致", "割合が出ていない（比べた命令の出力を見る）",
+    "出来上がりの差", "", "goal", null]);
+  $("#simpletable").innerHTML = table([["取れる情報"], ["今回の結果"], ["分かること"], ["スキルの直し方"]],
+    rows.map(r => `<tr><td>${r[0]}</td><td class="res">${mark(r[5])}${r[1]} ${link(r[4])}</td><td>${r[2]}</td><td>${r[3]}</td></tr>`));
+}
+// ナビや「くわしく」を押したら、その部分を開く（たたんだままだと飛んでも中が見えない）
+document.addEventListener("click", e => {
+  const a = e.target.closest("a[href^='#']");
+  const d = a && document.querySelector(a.getAttribute("href") + " details.sec");
+  if (d) d.open = true;
+});
+if (location.hash) { const d = document.querySelector(location.hash + " details.sec"); if (d) d.open = true; }
+
+// ---- スキルの流れ図（.drawio と同じ並び。箱＝手順、赤の破線＝前の手順に戻った） ----
+{
+  const box = $("#flowbox");
+  if (!F) {
+    box.innerHTML = `<p class="empty">スキルの手順が設定ファイル（profiles）の flow に書かれていないので、流れ図は描いていません。</p>`;
+  } else {
+    const W = 330, H = 92, X0 = 150, Y0 = 20, GAP = 54;
+    const all = F.steps.reduce((a, s) => a + fsec(s), 0) || 1;
+    const pos = {}; F.steps.forEach((s, i) => pos[s.id] = {x: X0, y: Y0 + i * (H + GAP), i});
+    const heat = share => { const a = [255, 244, 230], b = [217, 72, 15], t = Math.min(1, share * 1.6);
+      return `rgb(${a.map((v, k) => Math.round(v + (b[k] - v) * t)).join(",")})`; };
+    const SW = X0 + W + 190, SH = Y0 + F.steps.length * (H + GAP);
+    let g = `<defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="${css("--sub")}"/></marker>
+      <marker id="ahr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="${css("--fix")}"/></marker></defs>`;
+    let backN = 0, skipN = 0;
+    for (const e of F.edges) {
+      const a = pos[e.from], b = pos[e.to];
+      if (e.back) {                                   // 左を回る赤い破線
+        const off = 24 + (backN++ % 5) * 18, xl = X0 - off;
+        g += `<path d="M${X0},${a.y + H / 2 + 6} H${xl} V${b.y + H / 2 - 6} H${X0 - 2}" fill="none" stroke="${css("--fix")}" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#ahr)"><title>${e.n} 回戻った</title></path>
+          <text x="${xl - 4}" y="${(a.y + b.y + H) / 2}" font-size="11" fill="${css("--fix")}" text-anchor="end">${e.n}回</text>`;
+      } else if (b.i === a.i + 1) {                   // 次の手順へ: まっすぐ下
+        g += `<line x1="${X0 + W / 2}" y1="${a.y + H}" x2="${X0 + W / 2}" y2="${b.y - 2}" stroke="${css("--sub")}" stroke-width="1.5" marker-end="url(#ah)"/>`
+          + (e.n > 1 ? `<text x="${X0 + W / 2 + 8}" y="${a.y + H + GAP / 2 + 4}" font-size="11" fill="${css("--sub")}">${e.n}回</text>` : "");
+      } else {                                        // 手順を飛ばした: 右を回る実線
+        const off = 24 + (skipN++ % 5) * 18, xr = X0 + W + off;
+        g += `<path d="M${X0 + W},${a.y + H / 2 + 6} H${xr} V${b.y + H / 2 - 6} H${X0 + W + 2}" fill="none" stroke="${css("--sub")}" stroke-width="1.5" marker-end="url(#ah)"/>
+          <text x="${xr + 4}" y="${(a.y + b.y + H) / 2}" font-size="11" fill="${css("--sub")}">${e.n}回</text>`;
+      }
+    }
+    for (const s of F.steps) {
+      const {x, y} = pos[s.id], share = fsec(s) / all, on = s.visits > 0;
+      const fill = on ? heat(share) : css("--soft"), font = on && share > 0.35 ? "#fff" : on ? "#222" : css("--sub");
+      const lines = on ? [`${min(fsec(s))} 分（全体の ${Math.round(share * 100)}%）`, `考える ${min(s.think)} 分 ・ コマンドや読み書き ${min(s.tool)} 分`,
+        `入った回数 ${s.visits} 回` + (s.wait ? ` ・ 人の返事待ち ${min(s.wait)} 分` : "")] : ["通らなかった"];
+      g += `<rect x="${x}" y="${y}" width="${W}" height="${H}" rx="10" fill="${fill}" stroke="${css("--line")}"/>
+        <text x="${x + 14}" y="${y + 24}" font-size="13" font-weight="700" fill="${font}">${esc(s.name)}</text>`
+        + lines.map((l, k) => `<text x="${x + 14}" y="${y + 46 + k * 17}" font-size="12" fill="${font}">${esc(l)}</text>`).join("");
+    }
+    box.innerHTML = `<div class="scroll" style="border:0"><svg width="${SW}" height="${SH}" viewBox="0 0 ${SW} ${SH}">${g}</svg></div>`
+      + (R.drawio ? `<p style="font-size:13px;margin:8px 0 0">draw.io で開いて直せるファイル: <a href="${esc(R.drawio)}" download>${esc(R.drawio)}</a>（記録と同じフォルダにあります）</p>` : "");
+  }
+}
 
 // ---- 処理の流れ（タイムライン） ----
 const cats = [...new Set((T.spans || []).map(s => s.cat))];
@@ -238,6 +291,9 @@ function drawTimeline(zoom) {
 document.querySelectorAll("[data-zoom]").forEach(b => b.onclick = () => {
   document.querySelectorAll("[data-zoom]").forEach(x => x.classList.toggle("on", x === b)); drawTimeline(+b.dataset.zoom); });
 drawTimeline(1);
+document.querySelector("#flow details.sec").addEventListener("toggle", e => {   // たたんだ状態では幅が測れないので、開いたら描き直す
+  if (e.target.open) drawTimeline(+document.querySelector("[data-zoom].on").dataset.zoom);
+});
 window.addEventListener("resize", () => drawTimeline(+document.querySelector("[data-zoom].on").dataset.zoom));
 $("#legend").innerHTML = `<span><i style="background:var(--human)"></i>人の指示</span><span><i style="background:var(--fix)"></i>指摘・止めた</span>
   <span><i style="background:var(--think)"></i>考える・書く</span><span><i style="background:var(--wait)"></i>返事待ち</span>`
@@ -245,7 +301,6 @@ $("#legend").innerHTML = `<span><i style="background:var(--human)"></i>人の指
 const steps = [...(T.thinks || []).map(t => ({t0: t.t0, t1: t.t1, kind: "考える・書く", what: "→ 次: " + t.next + " " + t.what})),
   ...(T.spans || []).map(s => ({t0: s.t0, t1: s.t1, kind: s.cat, what: s.what})),
   ...(T.prompts || []).map((p, i) => ({t0: p.t, t1: p.t, kind: "人の指示 " + (i + 1), what: p.text}))].sort((a, b) => a.t0 - b.t0);
-const table = (head, rows) => `<table><tr>${head.map(h => `<th class="${h[1]||""}">${h[0]}</th>`).join("")}</tr>${rows.join("")}</table>`;
 $("#steps").innerHTML = table([["開始から","num"],["秒","num"],["作業"],["中身"]],
   steps.map(s => `<tr><td class="num">${min(s.t0)} 分</td><td class="num">${Math.round(s.t1 - s.t0)}</td><td>${esc(s.kind)}</td><td>${esc(s.what)}</td></tr>`));
 $("#images").innerHTML = (T.images || []).length ? table([["開始から","num"],["作業"],["ファイル"]],
@@ -258,33 +313,16 @@ $("#catbars").innerHTML = cl.map(c => `<div class="row"><div class="name" title=
   <div class="track"><span style="width:${c.tool/most*100}%;background:${cats.includes(c.name) ? color(c.name) : css("--c7")}" title="道具 ${min(c.tool)} 分（${c.count} 回）"></span>
   <span style="width:${c.think/most*100}%;background:var(--think)" title="この作業の前に考えていた時間 ${min(c.think)} 分"></span></div>
   <div class="num" style="text-align:right">${min(c.all)} 分</div></div>`).join("") || `<p class="empty">データがありません</p>`;
-$("#moments").innerHTML = table([["開始から","num"],["秒","num"],["直後にしたこと"]],
-  (T.moments || []).map(m => `<tr><td class="num">${min(m.t)} 分</td><td class="num">${Math.round(m.sec)}</td><td>${esc(m.next)}: ${esc(m.what)}</td></tr>`));
-$("#slowtools").innerHTML = table([["秒","num"],["作業"],["中身"]],
-  (T.slow || []).map(s => `<tr><td class="num">${Math.round(s.sec)}</td><td>${esc(s.cat)}</td><td>${esc(s.what)}</td></tr>`));
-
-// ---- どこが読まれたか ----
-function drawHeadings(mode) {
-  if (!C) { $("#headings").innerHTML = `<p class="empty">根拠のデータがありません</p>`; return; }
-  const all = [...C.used.map(h => ({...h})), ...C.never.map(h => ({...h, n: 0}))];
-  const top = Math.max(1, ...all.map(h => h.n));
-  const files = [...new Set(all.map(h => h.file))];
-  $("#headings").innerHTML = files.map(f => `<div style="font-size:12px;color:var(--sub);margin:6px 0 2px">${esc(f)}</div>` +
-    all.filter(h => h.file === f && (mode === "all" || (mode === "used" ? h.n : !h.n))).map(h => `<div class="row ${h.n ? "" : "never"}">
-      <div class="name" title="${esc(h.heading)}">${esc(h.heading)}</div>
-      <div class="track">${h.n ? `<span style="width:${h.n/top*100}%;background:var(--c0)"></span>` : `<span style="font-size:11px;padding-left:4px" title="${esc(h.body)}">${esc((h.body || "").slice(0, 60))}</span>`}</div>
-      <div style="text-align:right">${h.n ? h.n + " 回" : "0"}</div></div>`).join("")).join("");
-}
-document.querySelectorAll("[data-show]").forEach(b => b.onclick = () => {
-  document.querySelectorAll("[data-show]").forEach(x => x.classList.toggle("on", x === b)); drawHeadings(b.dataset.show); });
-drawHeadings("all");
-$("#none").innerHTML = C && C.none.length ? `<ul>${C.none.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : `<p class="empty">ありません</p>`;
+$("#slowtools").innerHTML = table([["秒","num"],["手順"],["何をしていたか"]],
+  (T.slow || []).map(s => `<tr><td class="num">${Math.round(s.sec)}</td><td>${esc(s.step || "-")}</td><td title="${esc(s.raw || "")}">${esc(s.what)}</td></tr>`));
 
 // ---- 正解との比較 ----
 const cmp = R.data && R.data.compare;
 const pics = R.images || [];
 let h = "";
-if (row.diff_cells !== undefined) h += `<div class="kpi"><div class="label">正解との違い</div><div class="value">${Number(row.diff_cells).toLocaleString()}<small> マス</small></div><div>${goal("diff_cells")} ${delta("diff_cells")}</div></div>`;
+if (row.compare_note) h += `<div class="kpi"><div class="label">正解との一致</div><div class="value">比べられない</div><div class="sub">${esc(row.compare_note)}</div></div>`;
+else if (has("match_pct")) h += `<div class="kpi"><div class="label">正解との一致</div><div class="value">${Number(row.match_pct).toFixed(1)}<small> %</small></div>`
+  + `<div class="sub">${has("diff_cells") ? `違うマス ${Number(row.diff_cells).toLocaleString()}` : ""}${prev && prev.match_pct ? ` ／ 前の回 ${Number(prev.match_pct).toFixed(1)}%` : ""}</div></div>`;
 if (!cmp && !pics.length) h += `<p class="empty">正解との比較はしていません（report に --compare を付けると入る）</p>`;
 if (pics.length >= 2) h += `<div class="tools" style="margin-top:10px"><button id="viewOpen">絵を比べる</button></div><div id="viewer" class="viewer" hidden>
   <div class="tools"><span>左:</span><select id="picA"></select><span>右:</span><select id="picB"></select>
@@ -294,7 +332,8 @@ if (cmp) h += `<details><summary>比較の命令の出力（${esc(cmp.command)}�
 $("#compare").innerHTML = h;
 if (pics.length >= 2) {
   const opts = pics.map((p, i) => `<option value="${i}">${esc(p.label)}</option>`).join("");
-  $("#picA").innerHTML = opts; $("#picB").innerHTML = opts; $("#picB").value = 1;
+  $("#picA").innerHTML = opts; $("#picB").innerHTML = opts;
+  $("#picB").value = pics[0].pair ?? 1;                    // 左右に並べた絵を切り分けた物は、その相手を右に
   let mode = "side";
   const draw = () => {
     const a = pics[$("#picA").value], b = pics[$("#picB").value];
@@ -311,14 +350,19 @@ if (pics.length >= 2) {
       <div class="pane" style="background:#000"><img src="${a.src}"><img src="${b.src}" style="position:absolute;inset:0;mix-blend-mode:difference"></div>`;
   };
   $("#viewOpen").onclick = () => { $("#viewer").hidden = !$("#viewer").hidden; $("#viewOpen").textContent = $("#viewer").hidden ? "絵を比べる" : "閉じる"; draw(); };
-  $("#picA").onchange = $("#picB").onchange = draw;
+  $("#picA").onchange = () => {                            // 左を選んだら、その組の相手を右に入れる
+    const pair = pics[$("#picA").value].pair;
+    if (pair !== null && pair !== undefined) $("#picB").value = pair;
+    draw();
+  };
+  $("#picB").onchange = draw;
   document.querySelectorAll("[data-mode]").forEach(b => b.onclick = () => {
     document.querySelectorAll("[data-mode]").forEach(x => x.classList.toggle("on", x === b)); mode = b.dataset.mode; draw(); });
 }
 
 // ---- 前の回と比べる ----
-const cols = [["started","開始"],["work_min","作業（分）"],["prompts","指示"],["corrections","指摘"],["interrupted","止めた"],
-  ["headings_used","使われた見出し"],["headings_never","使われなかった見出し"],["basis_none","根拠なし"],["diff_cells","正解との違い"],["output_tokens","出力トークン"]];
+const cols = [["started","開始"],["work_min","かかった時間（分）"],["prompts","人の指示"],["corrections","「それ違う」"],["interrupted","止めた"],
+  ["match_pct","正解との一致（%）"],["output_tokens","出力トークン"]];
 $("#runs").innerHTML = table(cols.map(c => [c[1], c[0] === "started" ? "" : "num"]),
   runs.map(r => `<tr${r.session === row.session ? ' style="font-weight:700"' : ""}>${cols.map(c => `<td class="${c[0] === "started" ? "" : "num"}">${esc(r[c[0]] ?? "")}</td>`).join("")}</tr>`));
 const ropts = runs.map((r, i) => `<option value="${i}">${esc(r.started)}（${esc((r.prompt || "").slice(0, 16))}）</option>`).join("");

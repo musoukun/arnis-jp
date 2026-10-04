@@ -125,24 +125,32 @@
       "target": 0,
       "better": "lower",
       "label": "人からの指摘",
+      "explain": "人から「それは違う」と言われた所",
+      "unit": "か所",
       "hint": "指摘の中身をスキルの決まりにする"
     },
     "interrupted": {
       "target": 0,
       "better": "lower",
       "label": "途中で止めた回数",
+      "explain": "人が作業を途中で止めた回数",
+      "unit": "回",
       "hint": "止めた直前に何をしていたかを、流れの図で見る"
     },
     "basis_none": {
       "target": 0,
       "better": "lower",
-      "label": "スキルに無い判断",
+      "label": "スキルに書いていない判断",
+      "explain": "スキルに書いていないことを、モデルが自分で決めた所",
+      "unit": "か所",
       "hint": "何度も出る判断をスキルに書き足す"
     },
     "diff_cells": {
       "target": 0,
       "better": "lower",
-      "label": "正解との違い（マス）",
+      "label": "正解との違い",
+      "explain": "建った物と正解のブロックが違うマス",
+      "unit": "マス",
       "hint": "違いの原因になったスキルの記述を直す"
     }
   },
@@ -233,7 +241,8 @@
     "command": "python .claude/skills/image2mc-builder/scripts/run.py {name} diff .claude/skills/image2mc-builder/examples/kfc_kitahanada/answer_v2.json",
     "default_name": "kfc_test",
     "metrics": {
-      "diff_cells": "違い: (\\d+) マス"
+      "diff_cells": "違い: (\\d+) マス",
+      "match_pct": "一致: ([\\d.]+)%"
     }
   },
   "usage_docs": [
@@ -241,5 +250,345 @@
     "recipes.md",
     "parts.md",
     "reference.md"
+  ],
+  "flow": {
+    "note": "スキルの手順（SKILL.md の Step 0〜6）。作業はこの順に目印を当てはめ、どれにも当たらない作業は、その時いた手順の中の作業として数える",
+    "steps": [
+      {
+        "id": "s0",
+        "name": "Step 0 設定をそろえる・スキルを読む",
+        "when": [
+          {
+            "tools": [
+              "Read",
+              "Grep",
+              "Glob"
+            ],
+            "input": "image2mc-builder"
+          },
+          {
+            "tools": [
+              "Bash",
+              "PowerShell"
+            ],
+            "command": "config\\.py|world_mapping|setup"
+          }
+        ]
+      },
+      {
+        "id": "s1",
+        "name": "Step 1 建物と敷地を決める",
+        "when": [
+          {
+            "tools": [
+              "Bash",
+              "PowerShell"
+            ],
+            "command": "OsmGeometry|osm_json|parcel|footprint|cells_in|site_cells"
+          },
+          {
+            "tools": [
+              "Read"
+            ],
+            "path": "parcel"
+          }
+        ]
+      },
+      {
+        "id": "s2",
+        "name": "Step 2 写真を読む・質問する",
+        "when": [
+          {
+            "tools": [
+              "Read"
+            ],
+            "path": "^(?!.*/out/).*\\.(png|jpe?g|webp)$"
+          },
+          {
+            "tool_pattern": "show_widget|read_me|AskUserQuestion"
+          },
+          {
+            "tools": [
+              "Bash",
+              "PowerShell"
+            ],
+            "command": "block_catalog\\.py|ask_form"
+          }
+        ]
+      },
+      {
+        "id": "s3",
+        "name": "Step 3 パーツに分けて書く",
+        "when": [
+          {
+            "tools": [
+              "Write",
+              "Edit"
+            ],
+            "path": "designs"
+          },
+          {
+            "tools": [
+              "Agent",
+              "Task"
+            ]
+          },
+          {
+            "tool_pattern": "SubagentHandback"
+          },
+          {
+            "tools": [
+              "Bash",
+              "PowerShell"
+            ],
+            "command": "gen_plan|assemble\\.py|plan\\.md"
+          }
+        ]
+      },
+      {
+        "id": "s4",
+        "name": "Step 4 プレビューで写真と比べる",
+        "when": [
+          {
+            "tools": [
+              "Bash",
+              "PowerShell"
+            ],
+            "command": "run\\.py.*\\b(preview|section|check|diff)\\b"
+          },
+          {
+            "tools": [
+              "Read"
+            ],
+            "path": "/out/.*\\.(png|jpe?g|webp)$"
+          }
+        ]
+      },
+      {
+        "id": "s5",
+        "name": "Step 5 施工",
+        "when": [
+          {
+            "tools": [
+              "Bash",
+              "PowerShell"
+            ],
+            "command": "run\\.py.*\\bbuild\\b"
+          }
+        ]
+      },
+      {
+        "id": "s6",
+        "name": "Step 6 ゲーム内で確かめる",
+        "when": [
+          {
+            "tools": [
+              "Bash",
+              "PowerShell"
+            ],
+            "command": "run\\.py.*\\b(capture|door)\\b|rcon"
+          }
+        ]
+      }
+    ]
+  },
+  "purposes": [
+    {
+      "tools": [
+        "Bash",
+        "PowerShell"
+      ],
+      "command": "sed\\s+-i\\s+'s/\\\"?([^/\\\"]+)\\\"?/\\\"?([^/\\\"]+)\\\"?/[^']*'\\s+\\S*?(\\w+)\\.py[\\s\\S]*run\\.py\\s+\\S+\\s+preview",
+      "group": "設計の値を書き換えて、描き直す",
+      "say": "部品 {3} の「{1}」を「{2}」に書き換えて、プレビューの絵を描き直す"
+    },
+    {
+      "tools": [
+        "Bash",
+        "PowerShell"
+      ],
+      "command": "run\\.py\\s+(\\S+)\\s+preview",
+      "group": "プレビューの絵を描く",
+      "say": "設計 {1} のプレビューの絵を描いて、写真と見比べる"
+    },
+    {
+      "tools": [
+        "Bash",
+        "PowerShell"
+      ],
+      "command": "run\\.py\\s+(\\S+)\\s+(section|check)",
+      "group": "断面と自動チェック",
+      "say": "設計 {1} の断面と自動チェックで、高さやすき間を確かめる"
+    },
+    {
+      "tools": [
+        "Bash",
+        "PowerShell"
+      ],
+      "command": "run\\.py\\s+(\\S+)\\s+build",
+      "group": "ワールドに建てる",
+      "say": "設計 {1} をワールドに建てる"
+    },
+    {
+      "tools": [
+        "Bash",
+        "PowerShell"
+      ],
+      "command": "run\\.py\\s+(\\S+)\\s+diff",
+      "group": "正解と比べる",
+      "say": "設計 {1} を正解とブロックごとに比べる"
+    },
+    {
+      "tools": [
+        "Bash",
+        "PowerShell"
+      ],
+      "command": "run\\.py\\s+(\\S+)\\s+(capture|door)",
+      "group": "ゲーム内で確かめる",
+      "say": "設計 {1} をゲーム内で確かめる（{2}）"
+    },
+    {
+      "tools": [
+        "Bash",
+        "PowerShell"
+      ],
+      "command": "sed\\s+-i\\s+'s/\\\"?([^/\\\"]+)\\\"?/\\\"?([^/\\\"]+)\\\"?/[^']*'\\s+\\S*?(\\w+)\\.py",
+      "group": "設計の値を書き換える",
+      "say": "部品 {3} の「{1}」を「{2}」に書き換えて、見た目を試す"
+    },
+    {
+      "tools": [
+        "Bash",
+        "PowerShell"
+      ],
+      "command": "sed\\s+-i\\s+'\\d*s\\|[^|]*\\|\\s*(\\w+)",
+      "group": "設計の値を書き換える",
+      "say": "設計の {1} の値を書き換える"
+    },
+    {
+      "tools": [
+        "Bash",
+        "PowerShell"
+      ],
+      "command": "p\\s*=\\s*['\\\"]([^'\\\"]+\\.py)['\\\"]",
+      "group": "設計の値を書き換える",
+      "say": "{1} をプログラムで書き換える"
+    },
+    {
+      "tools": [
+        "Write",
+        "Edit"
+      ],
+      "path": "/designs/",
+      "group": "設計を書く",
+      "say": "設計のファイル {file} を書く"
+    },
+    {
+      "tools": [
+        "Bash",
+        "PowerShell"
+      ],
+      "command": "cp\\s+-r\\s+\\S*_parts_template",
+      "group": "設計のひな形を写す",
+      "say": "パーツの設計のひな形を、新しい設計の場所に写す"
+    },
+    {
+      "tools": [
+        "Bash",
+        "PowerShell"
+      ],
+      "command": "OsmGeometry|osm_data|import_module",
+      "group": "建物の形を調べる",
+      "say": "地図データ（OSM）や設計から、建物の形と位置を調べる"
+    },
+    {
+      "tools": [
+        "Bash",
+        "PowerShell"
+      ],
+      "command": "block_catalog\\.py",
+      "group": "ブロックの見本を出す",
+      "say": "ブロックの見本（実物のテクスチャ）を出す"
+    },
+    {
+      "tool_pattern": "show_widget|read_me|AskUserQuestion",
+      "group": "質問の画面を出す",
+      "say": "人に質問する画面を出す"
+    },
+    {
+      "tools": [
+        "Bash",
+        "PowerShell"
+      ],
+      "command": "ask_form",
+      "group": "質問の画面を作る",
+      "say": "質問の画面を作る仕組みを読む・使う"
+    },
+    {
+      "tools": [
+        "Bash",
+        "PowerShell"
+      ],
+      "command": "(parts\\.py|assemble\\.py|base\\.py|plan\\.md|_parts_template|p_\\w+\\.py)",
+      "group": "道具や設計の中身を読んで調べる",
+      "say": "{1} の中身を読んで、作りを調べる"
+    },
+    {
+      "tools": [
+        "Read",
+        "Grep",
+        "Glob"
+      ],
+      "path": "(image2mc-builder|building-remodel)/",
+      "group": "スキルを読む",
+      "say": "スキルの説明 {file} を読む"
+    },
+    {
+      "tools": [
+        "Read"
+      ],
+      "path": "/out/.*\\.(png|jpe?g|webp)$",
+      "group": "描いた絵を見て確かめる",
+      "say": "描いた絵 {file} を見て、写真と比べる"
+    },
+    {
+      "tools": [
+        "Read"
+      ],
+      "path": "\\.(png|jpe?g|webp)$",
+      "group": "写真を見る",
+      "say": "写真 {file} を見る"
+    },
+    {
+      "tools": [
+        "Write",
+        "Edit"
+      ],
+      "path": "(scratchpad|/Temp/)",
+      "group": "その場のプログラムを書く",
+      "say": "その場で使うプログラム {file} を書く"
+    },
+    {
+      "tools": [
+        "Bash",
+        "PowerShell"
+      ],
+      "command": "python\\s+\\\"?[^\\\"]*(?:scratchpad|Temp)[^\\\"]*?([^/\\\"]+\\.py)",
+      "group": "その場のプログラムを走らせる",
+      "say": "その場で書いたプログラム {1} を走らせる"
+    },
+    {
+      "tools": [
+        "Agent",
+        "Task"
+      ],
+      "group": "手伝いの Agent に頼む",
+      "say": "手伝いの Agent に「{description}」を頼む"
+    },
+    {
+      "tool_pattern": "SubagentHandback",
+      "group": "手伝いの Agent の結果を受け取る",
+      "say": "手伝いの Agent から、書いたパーツの結果を受け取る"
+    }
   ]
 }
