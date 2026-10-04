@@ -137,6 +137,98 @@ def sign_cells(sign):
             yield r, col, (x, fy - r, z), (x + bx, fy - r, z + bz), facing
 
 
+# ---------------- 建物の形を整える ----------------
+
+# 再現する建物の幅と奥行きは、ワールドの縮尺 1.4 ではなく 1.3 で作る（ユーザー 2026-10-04「実際見てみて 0.1 引いた
+# くらいがちょうどよい」）。道路・敷地は 1.4 のまま、建物の形だけを真ん中から 1.3/1.4 に縮める
+BUILDING_SCALE = 1.3 / 1.4
+
+
+def building_cells(geo, way, scale=BUILDING_SCALE):
+    """OSM の建物の形（ワールドの縮尺 1.4）を、真ん中を中心に scale 倍に縮めてマスにする。設計の footprint(geo) で使う。"""
+    poly = geo.polygon(way)
+    cx, cz = sum(p[0] for p in poly) / len(poly), sum(p[1] for p in poly) / len(poly)
+    return cells_in([(cx + (x - cx) * scale, cz + (z - cz) * scale) for x, z in poly])
+
+
+def grow_footprint(cells, shift=(0, 0), grow=None, straighten=()):
+    """OSM の建物の形（セルの集合）を、再現に合わせて整える。設計の footprint(geo) から呼ぶ。
+      shift: (東へ, 南へ) ずらすマス数（負なら西・北）。正面の前に通り道・衝立・植え込みの余裕を作る時に
+      grow: {"n": 2, "s": 1, ...} その面を外へ何マス広げるか（各列・各行の端から伸ばす）。ワールドは縮尺 1.4 なので、
+            比率に合わせて数マス広げてよい（法則1）
+      straighten: ("n", "w", ...) その面の1〜2マスの段（OSM の傾き・ずれ）を、一番外の線までそろえて1本の真っすぐな壁にする
+    戻り値: 整えたセルの集合"""
+    out = {(x + shift[0], z + shift[1]) for (x, z) in cells}
+    for face, n in (grow or {}).items():
+        ox, oz = STEP[face]
+        along = 0 if ox == 0 else 1                        # n/s 面なら x の列ごと、w/e 面なら z の行ごと
+        ends = {}
+        for p in out:                                      # 列（行）ごとの一番外の端のセル
+            a, depth = p[along], p[1 - along] * (ox + oz)
+            if a not in ends or depth > ends[a][0]:
+                ends[a] = (depth, p)
+        out |= {(x + ox * k, z + oz * k) for _, (x, z) in ends.values() for k in range(1, n + 1)}
+    for face in straighten:
+        ox, oz = STEP[face]
+        along = 0 if ox == 0 else 1                        # 面に沿った座標（n/s 面なら x、w/e 面なら z）
+        edge = {}                                          # 面に沿った位置 → 一番外のセルの深さ
+        for p in out:
+            a, depth = p[along], p[1 - along] * (ox + oz)
+            edge[a] = max(edge.get(a, depth), depth)
+        line = max(edge.values())
+        for a, depth in edge.items():
+            if line - depth <= 2:                          # 2マス以内の段だけそろえる（大きな切り欠きはそのまま）
+                for dd in range(depth + 1, line + 1):
+                    v = dd * (ox + oz)
+                    out.add((a, v) if along == 0 else (v, a))
+    return out
+
+
+# ---------------- 位置の道具（座標を直書きしない） ----------------
+
+class Facade:
+    """建物の1つの面を「外から見て左の角から何マス」で指す。質問の答え（「北の角から10マス」）をそのまま書ける。
+    face: "n"/"s"/"w"/"e"。外から見て左の角が k=0（西面なら北の角、北面なら東の角）、右へ k が増える。
+    角は、その面で一番長くまっすぐ続く壁の線の端（建物が L 字などでも、正面の線で数える）。
+      at(k, out=0) … 左の角から k マス目の壁のセル（その列で一番外の壁。線の外の k や負の k も指せる）。out マス外へ出たセル
+      width        … 正面の線の長さ。真ん中は width // 2
+    例: west = parts.Facade(c, "w"); door = [west.at(10), west.at(11)]; 衝立 = west.at(10, out=2)"""
+
+    def __init__(self, c, face):
+        ox, oz = STEP[face]
+        self.face, self.out_dir, self.right = face, (ox, oz), (oz, -ox)
+        rows, lines = {}, {}
+        for p, dirs in c.wall.items():
+            if face in dirs:
+                a = p[0] * self.right[0] + p[1] * self.right[1]
+                depth = p[0] * ox + p[1] * oz
+                lines.setdefault(depth, set()).add(a)
+                if a not in rows or depth > rows[a][0]:
+                    rows[a] = (depth, p)
+        # 角は「その面で一番長くまっすぐ続く壁の線」の両端（出っ張り・引っ込みの角は使わない）
+        best = (0, 0)
+        for depth, al in lines.items():
+            for a in al:
+                if a - 1 not in al:
+                    n = 1
+                    while a + n in al:
+                        n += 1
+                    best = max(best, (n, -a))
+        self.rows, self.a0, self.width = rows, -best[1], best[0]
+
+    def line(self, k, out=0):
+        """正面の線の上で、左の角から k マス目・壁から out マス外のセル（壁が引っ込んだ列でも、正面の線から数える）。"""
+        (x, z), (rx, rz), (ox, oz) = self.at(0), self.right, self.out_dir
+        return (x + rx * k + ox * out, z + rz * k + oz * out)
+
+    def at(self, k, out=0):
+        row = self.rows.get(self.a0 + k)
+        if row is None:
+            raise ValueError(f"{self.face} の面に、左の角から {k} マス目の壁がありません（面の長さ {self.width}）")
+        (x, z), (ox, oz) = row[1], self.out_dir
+        return (x + ox * out, z + oz * out)
+
+
 # ---------------- 建物の本体 ----------------
 
 def build(spec, geo, seed=7):
@@ -413,6 +505,128 @@ def entrance(c, cells, face, height=3, out=2, inside=2, steps="stairs", step_sla
                     c.put(px, G, pz, c.pal["apron"])
             for y in range(top + 1, F + 1 + height):
                 c.put(px, y, pz, "air")
+
+
+def window_strip(c, face, k0, k1, rows=3, glass=None, recess=True, mullion=None):
+    """面の一部だけを窓にする（ほかは壁のまま）。face の面の、左の角から k0〜k1 マス目に、床の上から rows 段のガラス。
+    recess: ガラスを1マス奥に引っ込める（上下の枠の影が出る）。mullion: 細い縦枠を入れる k のリスト（黒い板ガラス）。"""
+    f, F = Facade(c, face), c.F
+    glass = glass or c.pal["glass"]
+    ox, oz = f.out_dir
+    for k in range(k0, k1 + 1):
+        x, z = f.at(k)
+        for y in range(F + 1, F + 1 + rows):
+            if mullion and k in mullion:
+                c.put(x, y, z, "black_stained_glass_pane")
+            elif recess and (x - ox, z - oz) in c.bld:
+                c.put(x, y, z, "air")
+                c.put(x - ox, y, z - oz, glass)
+            else:
+                c.put(x, y, z, glass)
+
+
+# ---------------- 入口のまわり一式 ----------------
+
+def front_entrance(c, face, door_k, screen_k=None, screen_w=4, left_gap=3, right_gap=1, bed_end=6,
+                   band="mangrove_slab", walk="brick_slab", landing="bricks", bed_edge="brick_wall", bed_fill="diorite",
+                   screen_edge="deepslate_brick_wall", screen_core="deepslate_bricks", bollard_post="blackstone_wall",
+                   light="lantern"):
+    """入口のまわり一式（辞書「入口のまわり」「扉の前の踏み台」）。extras の最後に1回呼ぶだけで、次を正しい順で置く:
+      通り道（壁の1マス外、ハーフ）・衝立（壁の2マス外、両端と上は塀、上は帯の真下まで。帯とは別で塔にはつながない）・
+      衝立の前を通る植え込み（塀・砂利・塀、壁の3マス外が砂利）・左右の通路（植え込みを切ってハーフ）・
+      右の端を建物まで閉じる塀・車止め（衝立の両脇と右の植え込みの真ん中、黒い塀＋ランタン）・
+      扉（entrance、扉の前の1マスだけフルブロック）・帯の延長（衝立の上まで）・ガラスの自動扉（auto_door）。
+    face: 入口の面。位置は Facade と同じ「外から見て左の角から k マス」（左の角が 0）。
+      door_k: 扉（2マス）の左のマス。screen_k: 衝立の左の端（省略すると door_k-1）。screen_w: 衝立の幅
+      left_gap / right_gap: 衝立と左／右の通路のあいだの植え込みのマス数。bed_end: 衝立の右の端から、右の端の塀まで何マス
+    戻り値: {"door": 扉の壁セル2つ, "used": auto_door の戻り値（furnish の avoid に渡す）,
+            "poster": signs に足す衝立のポスター（"poster", 列, 行, 左上の額縁, 向き）, "bed": 植え込みの砂利のセル}
+    （PLINTH = 1 の建物用。辞書「入口のまわり」の作り）"""
+    G, top = c.G, c.top
+    f = Facade(c, face)
+    ox, oz = f.out_dir
+    s0 = door_k - 1 if screen_k is None else screen_k
+    s1 = s0 + screen_w - 1
+    kl, kr, kend = s0 - left_gap - 1, s1 + right_gap + 1, s1 + bed_end
+    slab = f"{walk}[type=bottom]"
+
+    def put(cell, y, s):
+        c.put(cell[0], y, cell[1], s)
+
+    def clear(cell):
+        for y in range(G + 2, G + 5):
+            put(cell, y, "air")
+
+    def inward(k, n):                                   # 壁から n マス外のセルから、建物に当たるまで
+        x, z = f.line(k, n)
+        cells = []
+        while (x, z) not in c.bld and len(cells) < n + 3:
+            cells.append((x, z))
+            x, z = x - ox, z - oz
+        return cells
+
+    for k in range(kl, kend):                           # 通り道（壁が引っ込んだ列は2マス幅になる）
+        for cell in inward(k, 1):
+            clear(cell)
+            put(cell, G + 1, slab)
+    screen = range(s0, s1 + 1)
+    bed = []
+    for k in range(kl + 1, kend + 1):                   # 衝立の前の植え込み（衝立の前も通す）
+        put(f.line(k, 3), G + 1, bed_fill)
+        put(f.line(k, 4), G + 1, bed_edge)
+        if k not in screen:
+            put(f.line(k, 2), G + 1, bed_edge)
+        if k in (kl + 1, kend):                         # 両端は塀で閉じる
+            for n in (2, 3, 4):
+                put(f.line(k, n), G + 1, bed_edge)
+        elif k != kr:
+            bed.append(f.line(k, 3))
+    for cell in inward(kend, 4):                        # 右の端は建物まで塀で閉じる（通り道もそこで終わる）
+        clear(cell)
+        put(cell, G + 1, bed_edge)
+    for k in (kl, kr):                                  # 左右の通路（植え込みを切って通す。切り口は塀で閉じない）
+        for n in (4, 3, 2):
+            clear(f.line(k, n))
+            put(f.line(k, n), G + 1, slab)
+    for k in screen:                                    # 衝立: 植え込みの段を台に、上は帯の真下（top - 1）まで
+        cell = f.line(k, 2)
+        if k in (s0, s1):
+            for y in range(G + 1, top):
+                put(cell, y, screen_edge)
+        else:
+            put(cell, G + 1, screen_core)
+            put(cell, top - 1, screen_edge)
+    bollard(c, [f.line(k, 3) for k in (s0 - 1, s1 + 1, (kr + kend) // 2)], G + 2, post=bollard_post, light=light)
+    door = [f.at(door_k), f.at(door_k + 1)]
+    entrance(c, door, face, height=3, out=1, steps="slab", step_slab=walk)   # 外は1マスだけ空ける（衝立を消さない）
+    for k in (door_k, door_k + 1):                      # 扉の前の1マスだけフルブロック
+        put(f.line(k, 1), G + 1, landing)
+    for k in range(kl, kend + 1):                       # 帯を衝立の上まで前に出して、通り道と衝立を覆う
+        for cell in inward(k, 2):
+            put(cell, top, f"{band}[type=bottom]")
+    used = auto_door(c, door, face)
+    return {"door": door, "used": used, "poster": entrance_poster(c, face, door_k, screen_k, screen_w), "bed": bed}
+
+
+def entrance_poster(c, face, door_k, screen_k=None, screen_w=4):
+    """front_entrance の衝立のポスターの看板（"poster", 列, 行, 左上の額縁, 向き）。設計の signs(geo) に足す。
+    裏は衝立の芯（SIGN_BACKING の "poster" は screen_core と同じ deepslate_bricks に）。"""
+    f = Facade(c, face)
+    s0 = door_k - 1 if screen_k is None else screen_k
+    x, z = f.line(s0 + 1, 3)
+    return ("poster", screen_w - 2, 3, (x, c.G + 4, z), FACING[face])
+
+
+def camera(c, face, k, out, look_k=None, height=1.6, pitch=-6, **kw):
+    """プレビューのカメラを、座標を書かずに置く: face の面の左の角から k マス・壁から out マス外、目の高さ height。
+    look_k（省略すると k）の壁の所を向く。k を面の外（負や width 以上）にすると斜めの視点になる。
+    base.py の cameras(c) で {"名前": parts.camera(...)} を返す（run.py が使う）。"""
+    import math
+    f = Facade(c, face)
+    x, z = f.line(k, out)
+    tx, tz = f.line(k if look_k is None else look_k, 0)
+    yaw = math.degrees(math.atan2(-(tx - x), tz - z))       # Minecraft の向き（南 = 0、西 = 90）
+    return dict(rel_pos=(x + 0.5, 1 + height, z + 0.5), yaw=round(yaw, 1), pitch=pitch, **kw)
 
 
 # ---------------- 室内・自動扉 ----------------

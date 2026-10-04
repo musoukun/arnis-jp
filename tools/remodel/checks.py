@@ -23,7 +23,8 @@ def design(spec, geo):
     D.update({(x, y, z): s for x, y, z, s in blocks.ordered + blocks.decor})
     for sign in (spec.signs(geo) if hasattr(spec, "signs") else []):
         for _, _, cell, _, _ in parts.sign_cells(sign):
-            D[cell] = SIGN
+            if name(D.get(cell)) == "air":    # 額縁のマスに飾り（車止めのランタン等）があれば、そちらを残す
+                D[cell] = SIGN
     return D
 
 

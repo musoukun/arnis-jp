@@ -1,0 +1,244 @@
+{
+  "description": "building-remodel スキル（写真1枚から Minecraft の建物を再現する）のテストを評価する設定",
+  "root": "../../..",
+  "skill_dir": ".claude/skills/building-remodel",
+  "docs": [
+    {
+      "file": "SKILL.md",
+      "levels": [
+        2,
+        3
+      ]
+    },
+    {
+      "file": "recipes.md",
+      "levels": [
+        3
+      ]
+    },
+    {
+      "file": "reference.md",
+      "levels": [
+        2
+      ]
+    }
+  ],
+  "categories": [
+    {
+      "name": "スキルを読む",
+      "tools": [
+        "Read",
+        "Grep",
+        "Glob"
+      ],
+      "input": "building-remodel|SKILL\\.md|recipes\\.md"
+    },
+    {
+      "name": "自分で描いた絵で出来を確かめる",
+      "tools": [
+        "Read"
+      ],
+      "path": "remodel[\\\\/]out[\\\\/].*\\.(png|jpe?g|webp)$"
+    },
+    {
+      "name": "写真・画像を見る",
+      "tools": [
+        "Read"
+      ],
+      "path": "\\.(png|jpe?g|webp)$"
+    },
+    {
+      "name": "コードやデータを読む",
+      "tools": [
+        "Read",
+        "Grep",
+        "Glob"
+      ]
+    },
+    {
+      "name": "設計を書く",
+      "tools": [
+        "Write",
+        "Edit"
+      ],
+      "path": "designs"
+    },
+    {
+      "name": "そのほかのファイルを書く",
+      "tools": [
+        "Write",
+        "Edit"
+      ]
+    },
+    {
+      "name": "プレビュー",
+      "tools": [
+        "Bash",
+        "PowerShell"
+      ],
+      "command": "run\\.py.*\\bpreview\\b"
+    },
+    {
+      "name": "断面・チェック",
+      "tools": [
+        "Bash",
+        "PowerShell"
+      ],
+      "command": "run\\.py.*\\b(section|check|diff)\\b"
+    },
+    {
+      "name": "施工",
+      "tools": [
+        "Bash",
+        "PowerShell"
+      ],
+      "command": "run\\.py.*\\bbuild\\b"
+    },
+    {
+      "name": "ブロックの見本",
+      "tools": [
+        "Bash",
+        "PowerShell"
+      ],
+      "command": "block_catalog\\.py"
+    },
+    {
+      "name": "そのほかのコマンド",
+      "tools": [
+        "Bash",
+        "PowerShell"
+      ]
+    },
+    {
+      "name": "質問を作る",
+      "tool_pattern": "show_widget|read_me|AskUserQuestion"
+    },
+    {
+      "name": "Web・ブラウザ・サブエージェント",
+      "tool_pattern": "^(mcp__|WebSearch|WebFetch|ToolSearch|Agent|Skill|Artifact)"
+    }
+  ],
+  "visual_check": "remodel[\\\\/]out[\\\\/]",
+  "goals": {
+    "corrections": {
+      "target": 0,
+      "better": "lower",
+      "label": "人からの指摘",
+      "hint": "指摘の中身をスキルの決まりにする"
+    },
+    "interrupted": {
+      "target": 0,
+      "better": "lower",
+      "label": "途中で止めた回数",
+      "hint": "止めた直前に何をしていたかを、流れの図で見る"
+    },
+    "basis_none": {
+      "target": 0,
+      "better": "lower",
+      "label": "スキルに無い判断",
+      "hint": "何度も出る判断をスキルに書き足す"
+    },
+    "diff_cells": {
+      "target": 0,
+      "better": "lower",
+      "label": "正解との違い（マス）",
+      "hint": "違いの原因になったスキルの記述を直す"
+    }
+  },
+  "cite": {
+    "basis_word": "根拠",
+    "none": "根拠[:：]\\s*なし",
+    "rules": [
+      {
+        "file": "SKILL.md",
+        "heading": "^法則(\\d+)",
+        "pattern": "法則\\s*{1}(?!\\d)"
+      },
+      {
+        "file": "SKILL.md",
+        "heading": "^Step (\\d+)",
+        "pattern": "Step\\s*{1}(?!\\d)"
+      },
+      {
+        "file": "SKILL.md",
+        "heading": "^[12]\\. ",
+        "skip": true
+      },
+      {
+        "file": "SKILL.md",
+        "heading": "^(\\d+\\.\\d+) ([^（(:：]+)",
+        "pattern": "{1}|{2}"
+      },
+      {
+        "file": "SKILL.md",
+        "heading": "^(\\d+)\\. ([^（(:：]{3,})",
+        "pattern": "(?<![\\d.]){1}章|{2}"
+      },
+      {
+        "file": "SKILL.md",
+        "heading": "^(\\d+)\\. ",
+        "pattern": "(?<![\\d.]){1}章"
+      },
+      {
+        "file": "recipes.md",
+        "heading": "^([^（(・]+)",
+        "pattern": "「{1}"
+      }
+    ]
+  },
+  "specific_words": [
+    "KFC",
+    "ケンタッキー",
+    "ガスト",
+    "北花田",
+    "堺",
+    "衝立",
+    "ポスター",
+    "ドライブスルー",
+    "kfc",
+    "gusto"
+  ],
+  "library": {
+    "path": "tools/remodel/parts.py",
+    "module": "parts",
+    "internal": [
+      "build",
+      "roof",
+      "ring_of",
+      "distance_inward",
+      "connect",
+      "is_decor"
+    ]
+  },
+  "code": {
+    "dir": "tools/remodel/designs",
+    "library": "parts",
+    "manual_calls": [
+      "put"
+    ],
+    "number_min": 100,
+    "number_max": 1000000,
+    "skip_keywords": [
+      "width",
+      "height",
+      "vfov"
+    ],
+    "count_patterns": {
+      "地面から数えた高さ（G + 数）": "\\bG\\s*\\+\\s*\\d",
+      "帯・床の基準から書いた高さ（top・F）": "\\btop\\s*[-+]|\\bF\\s*[-+]"
+    }
+  },
+  "compare": {
+    "command": "python tools/remodel/run.py {name} diff .claude/skills/building-remodel/examples/kfc_kitahanada/answer_v2.json",
+    "default_name": "kfc_test",
+    "metrics": {
+      "diff_cells": "違い: (\\d+) マス"
+    }
+  },
+  "usage_docs": [
+    "SKILL.md",
+    "recipes.md",
+    "parts.md",
+    "reference.md"
+  ]
+}

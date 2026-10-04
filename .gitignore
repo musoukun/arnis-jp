@@ -62,13 +62,17 @@ gen/
 # fixtures under tests/golden.
 /tools/*
 !/tools/map_viewer.html
+!/tools/skill_eval/
+/tools/skill_eval/reports/
+/tools/skill_eval/versions/
 !/tools/remodel/
 /tools/remodel/builds/
 /tools/remodel/out/
 # 建物ごとのデータ・生成物・個人設定はソースではないのでコミットしない（ユーザー指定 2026-10-04）
-# ただし KFC 堺北花田の設計だけは building-remodel スキルのサンプルとして入れる（ユーザー指定 2026-10-04）
+# ただし設計の型（パーツのフォルダ）と、KFC 堺北花田の正解 v2 だけは building-remodel スキルのサンプルとして入れる（ユーザー指定 2026-10-04）
 /tools/remodel/designs/*
-!/tools/remodel/designs/kfc_kitahanada.py
+!/tools/remodel/designs/_parts_template/
+!/tools/remodel/designs/kfc_kitahanada_v2.py
 /tools/remodel/specs/
 /tools/remodel/builds*/
 /tools/remodel/block_catalog.json

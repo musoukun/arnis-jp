@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>スキルのテストの記録</title>
+<style>
+:root{
+  --bg:#f7f6f2;--card:#ffffff;--fg:#1f1f1d;--sub:#6b6a66;--line:#dedcd5;--soft:#efede6;
+  --good:#2f7d4f;--good-bg:#e3f2e8;--warn:#b5482a;--warn-bg:#fbe7df;--info:#2f5f9e;--info-bg:#e3ecf8;
+  --think:#c9a23a;--wait:#d9d6cc;--human:#6a4fb3;--fix:#d0342c;
+  --c0:#3e7cb1;--c1:#4f9d69;--c2:#b0623c;--c3:#7b5ea7;--c4:#2a9d8f;--c5:#c05780;--c6:#8a8f3a;--c7:#5d6d7e;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#181816;--card:#22221f;--fg:#ebe9e3;--sub:#a3a199;--line:#3b3a36;--soft:#2b2a27;
+  --good:#6fcf97;--good-bg:#1f3a2a;--warn:#f08a6c;--warn-bg:#43251c;--info:#7fb0f0;--info-bg:#1d2c42;
+  --think:#e0bd55;--wait:#3a3934;--human:#a98ef0;--fix:#ff6b61;
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.65 system-ui,"Yu Gothic UI","Hiragino Sans",sans-serif}
+main{max-width:1180px;margin:0 auto;padding:0 16px 64px}
+header{padding:20px 0 8px}
+h1{font-size:22px;margin:0 0 4px}
+.meta{color:var(--sub);font-size:13px}
+nav{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);padding:8px 0;display:flex;gap:6px;flex-wrap:wrap}
+nav a{color:var(--fg);text-decoration:none;font-size:13px;padding:3px 10px;border:1px solid var(--line);border-radius:99px;background:var(--card)}
+nav a:hover{border-color:var(--fg)}
+section{margin-top:28px}
+h2{font-size:18px;margin:0 0 4px}
+.lead{color:var(--sub);font-size:13px;margin:0 0 12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px}
+.kpi .label{font-size:12px;color:var(--sub)}
+.kpi .value{font-size:26px;font-weight:700;line-height:1.2;margin:2px 0}
+.kpi .value small{font-size:13px;font-weight:400;color:var(--sub)}
+.kpi .sub{font-size:12px;color:var(--sub)}
+.badge{display:inline-block;font-size:11px;padding:0 7px;border-radius:99px;margin-right:4px}
+.ok{background:var(--good-bg);color:var(--good)} .ng{background:var(--warn-bg);color:var(--warn)} .neutral{background:var(--soft);color:var(--sub)}
+.split{display:flex;height:8px;border-radius:4px;overflow:hidden;margin-top:6px;background:var(--soft)}
+.findings{display:grid;gap:8px}
+.finding{border-left:4px solid var(--line);padding:8px 12px;border-radius:6px;background:var(--card);border-top:1px solid var(--line);border-right:1px solid var(--line);border-bottom:1px solid var(--line)}
+.finding.warn{border-left-color:var(--warn)} .finding.good{border-left-color:var(--good)} .finding.info{border-left-color:var(--info)}
+.finding .t{font-weight:700} .finding .d{font-size:13px;color:var(--sub);margin-top:2px} .finding .a{font-size:13px;margin-top:4px}
+.finding .a::before{content:"→ 直す候補: ";color:var(--sub)}
+.tools{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:8px;font-size:13px}
+button,select{font:inherit;font-size:13px;padding:3px 10px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg);cursor:pointer}
+button.on{background:var(--fg);color:var(--bg);border-color:var(--fg)}
+.scroll{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--card)}
+svg text{font-family:inherit}
+.legend{display:flex;gap:12px;flex-wrap:wrap;font-size:12px;color:var(--sub);margin-top:8px}
+.legend i{display:inline-block;width:12px;height:12px;border-radius:2px;margin-right:4px;vertical-align:-2px}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th,td{border-bottom:1px solid var(--line);padding:5px 8px;text-align:left;vertical-align:top}
+th{color:var(--sub);font-weight:600;background:var(--soft)}
+td.num,th.num{text-align:right;white-space:nowrap}
+.tbl{overflow-x:auto}
+details{margin-top:10px} summary{cursor:pointer;color:var(--sub);font-size:13px}
+pre{background:var(--soft);padding:10px;border-radius:8px;overflow-x:auto;font-size:12px;line-height:1.4;white-space:pre-wrap}
+.bars .row{display:grid;grid-template-columns:minmax(120px,240px) 1fr 70px;gap:8px;align-items:center;font-size:13px;padding:3px 0}
+.bars .track{height:14px;background:var(--soft);border-radius:3px;display:flex;overflow:hidden}
+.bars .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.never{color:var(--sub)}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media (max-width:760px){.grid2{grid-template-columns:1fr}.bars .row{grid-template-columns:1fr 70px}.bars .track{grid-column:1/-1}}
+.viewer{margin-top:10px}
+.viewer .pane{position:relative;overflow:hidden;border-radius:8px;border:1px solid var(--line)}
+.viewer img{display:block;width:100%}
+.viewer .lbl{position:absolute;top:6px;padding:1px 8px;font-size:12px;border-radius:4px;background:rgba(0,0,0,.6);color:#fff}
+.viewer .over{position:absolute;inset:0;overflow:hidden;border-right:2px solid #fff;box-shadow:2px 0 0 rgba(0,0,0,.4)}
+.viewer .over img{width:auto;height:100%;max-width:none}
+.viewer input[type=range]{width:100%}
+.delta-up{color:var(--warn)} .delta-down{color:var(--good)}
+.empty{color:var(--sub);font-size:13px}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1 id="title">スキルのテストの記録</h1>
+  <div class="meta" id="meta"></div>
+</header>
+<nav id="nav">
+  <a href="#summary">まとめ</a><a href="#analysis">分析と直す候補</a><a href="#flow">処理の流れ</a>
+  <a href="#slow">どこが遅いか</a><a href="#read">どこが読まれたか</a><a href="#goal">正解との比較</a>
+  <a href="#history">前の回と比べる</a><a href="#raw">細かい記録</a>
+</nav>
+
+<section id="summary">
+  <h2>まとめ（ゴールと現実）</h2>
+  <p class="lead">ゴールはプロファイルの goals。「前の回」は、同じスキルの1つ前のテストとの差。</p>
+  <div class="kpis" id="kpis"></div>
+</section>
+
+<section id="analysis">
+  <h2>分析と直す候補</h2>
+  <p class="lead">数字から読めることと、スキルや道具をどう直すと速く・正しくなるかの候補。決めつけではなく候補。</p>
+  <div class="findings" id="findings"></div>
+</section>
+
+<section id="flow">
+  <h2>処理の流れ</h2>
+  <p class="lead">横が時間（開始からの分）、1行が1つの作業。灰色の帯は人の返事待ち。紫の▼は人の指示、赤の▼は指摘、✕は途中で止めた所。棒に指を置くと中身が出る。</p>
+  <div class="tools"><span>拡大:</span><button data-zoom="1" class="on">全体</button><button data-zoom="2">2倍</button><button data-zoom="4">4倍</button><button data-zoom="8">8倍</button></div>
+  <div class="scroll"><svg id="timeline"></svg></div>
+  <div class="legend" id="legend"></div>
+  <details><summary>順番の一覧（表）</summary><div class="tbl" id="steps"></div></details>
+  <details><summary>見た画像</summary><div class="tbl" id="images"></div></details>
+</section>
+
+<section id="slow">
+  <h2>どこが遅いか</h2>
+  <p class="lead">作業の種類ごとに、道具が動いていた時間（濃い色）と、その作業の前にモデルが考えていた時間（黄色）。</p>
+  <div class="card bars" id="catbars"></div>
+  <div class="grid2" style="margin-top:12px">
+    <div class="card"><h3 style="font-size:14px;margin:0 0 6px">長く考えた所</h3><div class="tbl" id="moments"></div></div>
+    <div class="card"><h3 style="font-size:14px;margin:0 0 6px">時間のかかった道具</h3><div class="tbl" id="slowtools"></div></div>
+  </div>
+</section>
+
+<section id="read">
+  <h2>どこが読まれたか</h2>
+  <p class="lead">スキルの見出しごとに、判断の根拠（「根拠: 〜」）として使われた回数。使われなかった見出しは、1回で削らず、続けて 0 なら削る候補。</p>
+  <div class="tools"><button data-show="all" class="on">全部</button><button data-show="used">使われた</button><button data-show="never">使われなかった</button></div>
+  <div class="card bars" id="headings"></div>
+  <details id="nonebox"><summary>スキルに書いていない判断（根拠: なし）</summary><div id="none"></div></details>
+</section>
+
+<section id="goal">
+  <h2>正解との比較</h2>
+  <p class="lead">正解との違いの数。絵があるときは「絵を比べる」で、左右・スライダー・違う所の3つの見方で比べられる。</p>
+  <div class="card" id="compare"></div>
+</section>
+
+<section id="history">
+  <h2>前の回と比べる</h2>
+  <p class="lead">同じスキルのテストの一覧。2つ選ぶと、数字を左右に並べて差を出す。</p>
+  <div class="card tbl" id="runs"></div>
+  <div class="tools" style="margin-top:10px"><span>比べる:</span><select id="runA"></select><span>と</span><select id="runB"></select><button id="runGo">左右に並べる</button></div>
+  <div id="runDiff"></div>
+</section>
+
+<section id="raw">
+  <h2>細かい記録</h2>
+  <details><summary>Markdown の記録をすべて見る</summary><pre id="markdown"></pre></details>
+</section>
+</main>
+
+<script>
+const R = /*__DATA__*/null;
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const min = s => (s / 60).toFixed(1);
+const T = (R.data && R.data.time) || {};
+const C = (R.data && R.data.cite) || null;
+const row = R.row || {};
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+
+// ---- 見出し ----
+$("#title").textContent = `スキルのテストの記録（${R.profile}）`;
+$("#meta").innerHTML = `開始 ${esc(row.started)} ／ セッション ${esc(row.session)}<br>最初の指示: ${esc(row.prompt)}`;
+
+// ---- まとめ ----
+const runs = R.history || [];
+const idx = runs.findIndex(r => r.session === row.session);
+const prev = idx > 0 ? runs[idx - 1] : null;
+function delta(key, lowerBetter = true) {
+  if (!prev || prev[key] === undefined || prev[key] === "" || row[key] === undefined) return "";
+  const d = Number(row[key]) - Number(prev[key]);
+  if (!d) return `<span class="sub">前の回と同じ</span>`;
+  const good = lowerBetter ? d < 0 : d > 0;
+  return `<span class="${good ? "delta-down" : "delta-up"}">前の回より ${d > 0 ? "+" : ""}${+d.toFixed(1)}</span>`;
+}
+function goal(key) {
+  const g = (R.goals || {})[key];
+  if (!g || row[key] === undefined || row[key] === "") return "";
+  const v = Number(row[key]), t = Number(g.target), ok = (g.better || "lower") === "lower" ? v <= t : v >= t;
+  return `<span class="badge ${ok ? "ok" : "ng"}">ゴール ${t} ${ok ? "達成" : "未達"}</span>`;
+}
+function kpi(label, value, unit, sub, key, lowerBetter = true, extra = "") {
+  return `<div class="card kpi"><div class="label">${label}</div><div class="value">${value}<small> ${unit}</small></div>
+    <div>${key ? goal(key) : ""}</div><div class="sub">${sub}</div><div class="sub">${key ? delta(key, lowerBetter) : ""}</div>${extra}</div>`;
+}
+const k = [];
+if (T.work !== undefined) {
+  const w = T.work + T.wait || 1;
+  const bar = `<div class="split" title="考える・書く / 道具 / 返事待ち">
+    <span style="width:${T.think / w * 100}%;background:var(--think)"></span>
+    <span style="width:${T.tool / w * 100}%;background:var(--c0)"></span>
+    <span style="width:${T.wait / w * 100}%;background:var(--wait)"></span></div>`;
+  k.push(kpi("作業時間", min(T.work), "分", `考える・書く ${min(T.think)} 分 ／ 道具 ${min(T.tool)} 分 ／ 返事待ち ${min(T.wait)} 分`, "work_min", true, bar));
+}
+k.push(kpi("人の指示", row.prompts ?? "-", "回", `答えた項目 ${row.answer_items ?? 0} 個 ／ 途中で止めた ${row.interrupted ?? 0} 回 ${goal("interrupted")}`, "prompts"));
+k.push(kpi("人からの指摘", row.corrections ?? "-", "個", "一発でできなかった所", "corrections"));
+if (C) k.push(kpi("使われた見出し", C.used.length, `/ ${C.used.length + C.never.length}`, `使われなかった ${C.never.length} 個 ／ 根拠なしの判断 ${row.basis_none ?? 0} 個`, "basis_none"));
+if (row.diff_cells !== undefined) k.push(kpi("正解との違い", Number(row.diff_cells).toLocaleString(), "マス", "", "diff_cells"));
+if (T.tokens !== undefined) k.push(kpi("出力トークン", T.tokens.toLocaleString(), "", "", "output_tokens"));
+$("#kpis").innerHTML = k.join("");
+
+// ---- 分析 ----
+$("#findings").innerHTML = (R.findings || []).map(f => `<div class="finding ${f.level}">
+  <div class="t">${esc(f.title)}</div>${f.detail ? `<div class="d">${esc(f.detail)}</div>` : ""}${f.action ? `<div class="a">${esc(f.action)}</div>` : ""}</div>`).join("")
+  || `<p class="empty">分析できる数字がありません</p>`;
+
+// ---- 処理の流れ（タイムライン） ----
+const cats = [...new Set((T.spans || []).map(s => s.cat))];
+const palette = ["--c0","--c1","--c2","--c3","--c4","--c5","--c6","--c7"].map(css);
+const color = c => palette[cats.indexOf(c) % palette.length];
+const lanes = [{name: "人", kind: "human"}, {name: "考える・書く", kind: "think"}, ...cats.map(c => ({name: c, kind: "tool"}))];
+function drawTimeline(zoom) {
+  const svg = $("#timeline"), box = svg.parentElement.clientWidth || 900;
+  const left = 170, lane = 26, top = 26, total = Math.max(T.total || 1, 1);
+  const W = Math.max(box, left + (box - left - 20) * zoom), H = top + lanes.length * lane + 10;
+  const x = s => left + (s / total) * (W - left - 20);
+  const sub = css("--sub"), line = css("--line"), fg = css("--fg");
+  let g = `<rect width="${W}" height="${H}" fill="${css("--card")}"/>`;
+  const perMin = (W - left - 20) / (total / 60);              // 1分あたりの幅
+  const step = [1,2,5,10,15,30,60,120].find(m => m * perMin >= 56) || 120;   // 目盛りの間を 56px 以上に
+  for (let m = 0; m * 60 <= total; m += step)
+    g += `<line x1="${x(m*60)}" x2="${x(m*60)}" y1="${top-6}" y2="${H}" stroke="${line}"/><text x="${x(m*60)+2}" y="14" font-size="11" fill="${sub}">${m}分</text>`;
+  for (const w of T.waits || [])
+    g += `<rect x="${x(w.t0)}" y="${top}" width="${Math.max(1, x(w.t1)-x(w.t0))}" height="${lanes.length*lane}" fill="${css("--wait")}" opacity=".7"><title>人の返事待ち ${min(w.t1-w.t0)} 分</title></rect>`;
+  lanes.forEach((L, i) => {
+    const y = top + i * lane;
+    g += `<text x="8" y="${y+17}" font-size="12" fill="${fg}">${esc(L.name.length > 13 ? L.name.slice(0, 13) + "…" : L.name)}<title>${esc(L.name)}</title></text>`;
+    g += `<line x1="${left}" x2="${W-20}" y1="${y+lane}" y2="${y+lane}" stroke="${line}" stroke-dasharray="2 3"/>`;
+  });
+  const bar = (i, a, b, c, tip) => `<rect x="${x(a)}" y="${top+i*lane+5}" width="${Math.max(2, x(b)-x(a))}" height="${lane-10}" rx="2" fill="${c}"><title>${esc(tip)}</title></rect>`;
+  for (const t of T.thinks || []) g += bar(1, t.t0, t.t1, css("--think"), `${min(t.t0)}〜${min(t.t1)}分 考える・書く ${Math.round(t.t1-t.t0)}秒 → 次: ${t.next} ${t.what}`);
+  for (const s of T.spans || []) g += bar(2 + cats.indexOf(s.cat), s.t0, s.t1, color(s.cat), `${min(s.t0)}〜${min(s.t1)}分 ${s.cat} ${Math.round(s.t1-s.t0)}秒: ${s.what}`);
+  const tri = (t, c, tip) => `<path d="M${x(t)-6},${top+4} h12 l-6,10 z" fill="${c}"><title>${esc(tip)}</title></path>`;
+  (T.prompts || []).forEach((p, i) => g += tri(p.t, css("--human"), `${min(p.t)}分 人の指示 ${i+1}: ${p.text}`)
+    + `<line x1="${x(p.t)}" x2="${x(p.t)}" y1="${top}" y2="${H}" stroke="${css("--human")}" stroke-width="1" opacity=".5"/>`);
+  for (const f of T.fixes || []) g += `<path d="M${x(f.t)-6},${top+lane-2} h12 l-6,10 z" fill="${css("--fix")}"><title>${esc(min(f.t) + "分 指摘: " + f.text)}</title></path>`;
+  for (const s of T.stops || []) g += `<text x="${x(s)-5}" y="${top+17}" font-size="14" fill="${css("--fix")}">✕<title>${min(s)}分 途中で止めた</title></text>`;
+  svg.setAttribute("width", W); svg.setAttribute("height", H); svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.innerHTML = g;
+}
+document.querySelectorAll("[data-zoom]").forEach(b => b.onclick = () => {
+  document.querySelectorAll("[data-zoom]").forEach(x => x.classList.toggle("on", x === b)); drawTimeline(+b.dataset.zoom); });
+drawTimeline(1);
+window.addEventListener("resize", () => drawTimeline(+document.querySelector("[data-zoom].on").dataset.zoom));
+$("#legend").innerHTML = `<span><i style="background:var(--human)"></i>人の指示</span><span><i style="background:var(--fix)"></i>指摘・止めた</span>
+  <span><i style="background:var(--think)"></i>考える・書く</span><span><i style="background:var(--wait)"></i>返事待ち</span>`
+  + cats.map(c => `<span><i style="background:${color(c)}"></i>${esc(c)}</span>`).join("");
+const steps = [...(T.thinks || []).map(t => ({t0: t.t0, t1: t.t1, kind: "考える・書く", what: "→ 次: " + t.next + " " + t.what})),
+  ...(T.spans || []).map(s => ({t0: s.t0, t1: s.t1, kind: s.cat, what: s.what})),
+  ...(T.prompts || []).map((p, i) => ({t0: p.t, t1: p.t, kind: "人の指示 " + (i + 1), what: p.text}))].sort((a, b) => a.t0 - b.t0);
+const table = (head, rows) => `<table><tr>${head.map(h => `<th class="${h[1]||""}">${h[0]}</th>`).join("")}</tr>${rows.join("")}</table>`;
+$("#steps").innerHTML = table([["開始から","num"],["秒","num"],["作業"],["中身"]],
+  steps.map(s => `<tr><td class="num">${min(s.t0)} 分</td><td class="num">${Math.round(s.t1 - s.t0)}</td><td>${esc(s.kind)}</td><td>${esc(s.what)}</td></tr>`));
+$("#images").innerHTML = (T.images || []).length ? table([["開始から","num"],["作業"],["ファイル"]],
+  T.images.map(i => `<tr><td class="num">${min(i.t)} 分</td><td>${esc(i.cat)}${i.own ? ' <span class="badge neutral">自分で描いた絵</span>' : ""}</td><td>${esc(i.file)}</td></tr>`)) : `<p class="empty">画像は見ていません</p>`;
+
+// ---- どこが遅いか ----
+const cl = (T.categories || []).map(c => ({...c, all: c.tool + c.think})).sort((a, b) => b.all - a.all);
+const most = Math.max(1, ...cl.map(c => c.all));
+$("#catbars").innerHTML = cl.map(c => `<div class="row"><div class="name" title="${esc(c.name)}">${esc(c.name)}</div>
+  <div class="track"><span style="width:${c.tool/most*100}%;background:${cats.includes(c.name) ? color(c.name) : css("--c7")}" title="道具 ${min(c.tool)} 分（${c.count} 回）"></span>
+  <span style="width:${c.think/most*100}%;background:var(--think)" title="この作業の前に考えていた時間 ${min(c.think)} 分"></span></div>
+  <div class="num" style="text-align:right">${min(c.all)} 分</div></div>`).join("") || `<p class="empty">データがありません</p>`;
+$("#moments").innerHTML = table([["開始から","num"],["秒","num"],["直後にしたこと"]],
+  (T.moments || []).map(m => `<tr><td class="num">${min(m.t)} 分</td><td class="num">${Math.round(m.sec)}</td><td>${esc(m.next)}: ${esc(m.what)}</td></tr>`));
+$("#slowtools").innerHTML = table([["秒","num"],["作業"],["中身"]],
+  (T.slow || []).map(s => `<tr><td class="num">${Math.round(s.sec)}</td><td>${esc(s.cat)}</td><td>${esc(s.what)}</td></tr>`));
+
+// ---- どこが読まれたか ----
+function drawHeadings(mode) {
+  if (!C) { $("#headings").innerHTML = `<p class="empty">根拠のデータがありません</p>`; return; }
+  const all = [...C.used.map(h => ({...h})), ...C.never.map(h => ({...h, n: 0}))];
+  const top = Math.max(1, ...all.map(h => h.n));
+  const files = [...new Set(all.map(h => h.file))];
+  $("#headings").innerHTML = files.map(f => `<div style="font-size:12px;color:var(--sub);margin:6px 0 2px">${esc(f)}</div>` +
+    all.filter(h => h.file === f && (mode === "all" || (mode === "used" ? h.n : !h.n))).map(h => `<div class="row ${h.n ? "" : "never"}">
+      <div class="name" title="${esc(h.heading)}">${esc(h.heading)}</div>
+      <div class="track">${h.n ? `<span style="width:${h.n/top*100}%;background:var(--c0)"></span>` : `<span style="font-size:11px;padding-left:4px" title="${esc(h.body)}">${esc((h.body || "").slice(0, 60))}</span>`}</div>
+      <div style="text-align:right">${h.n ? h.n + " 回" : "0"}</div></div>`).join("")).join("");
+}
+document.querySelectorAll("[data-show]").forEach(b => b.onclick = () => {
+  document.querySelectorAll("[data-show]").forEach(x => x.classList.toggle("on", x === b)); drawHeadings(b.dataset.show); });
+drawHeadings("all");
+$("#none").innerHTML = C && C.none.length ? `<ul>${C.none.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : `<p class="empty">ありません</p>`;
+
+// ---- 正解との比較 ----
+const cmp = R.data && R.data.compare;
+const pics = R.images || [];
+let h = "";
+if (row.diff_cells !== undefined) h += `<div class="kpi"><div class="label">正解との違い</div><div class="value">${Number(row.diff_cells).toLocaleString()}<small> マス</small></div><div>${goal("diff_cells")} ${delta("diff_cells")}</div></div>`;
+if (!cmp && !pics.length) h += `<p class="empty">正解との比較はしていません（report に --compare を付けると入る）</p>`;
+if (pics.length >= 2) h += `<div class="tools" style="margin-top:10px"><button id="viewOpen">絵を比べる</button></div><div id="viewer" class="viewer" hidden>
+  <div class="tools"><span>左:</span><select id="picA"></select><span>右:</span><select id="picB"></select>
+  <button data-mode="side" class="on">左右</button><button data-mode="slider">スライダー</button><button data-mode="diff">違う所</button></div><div id="stage"></div></div>`;
+else if (pics.length === 1) h += `<div class="viewer"><div class="pane"><img src="${pics[0].src}"><span class="lbl" style="left:6px">${esc(pics[0].label)}</span></div></div>`;
+if (cmp) h += `<details><summary>比較の命令の出力（${esc(cmp.command)}）</summary><pre>${esc(cmp.output)}</pre></details>`;
+$("#compare").innerHTML = h;
+if (pics.length >= 2) {
+  const opts = pics.map((p, i) => `<option value="${i}">${esc(p.label)}</option>`).join("");
+  $("#picA").innerHTML = opts; $("#picB").innerHTML = opts; $("#picB").value = 1;
+  let mode = "side";
+  const draw = () => {
+    const a = pics[$("#picA").value], b = pics[$("#picB").value];
+    const tag = (p, side) => `<span class="lbl" style="${side}:6px">${esc(p.label)}</span>`;
+    if (mode === "side") $("#stage").innerHTML = `<div class="grid2"><div class="pane"><img src="${a.src}">${tag(a,"left")}</div><div class="pane"><img src="${b.src}">${tag(b,"left")}</div></div>`;
+    if (mode === "slider") {
+      $("#stage").innerHTML = `<div class="pane" id="sl"><img src="${b.src}">${tag(b,"right")}<div class="over" id="ov" style="width:50%"><img src="${a.src}" id="ovimg">${tag(a,"left")}</div></div>
+        <input type="range" min="0" max="100" value="50" id="slv" aria-label="境目の位置">`;
+      const fit = () => { $("#ovimg").style.height = $("#sl").clientHeight + "px"; };
+      $("#sl img").onload = fit; fit();
+      $("#slv").oninput = e => $("#ov").style.width = e.target.value + "%";
+    }
+    if (mode === "diff") $("#stage").innerHTML = `<p class="lead">2枚を重ねて、同じ所は黒く、違う所だけが明るく見える（同じ大きさ・同じ視点の絵どうしで使う）。</p>
+      <div class="pane" style="background:#000"><img src="${a.src}"><img src="${b.src}" style="position:absolute;inset:0;mix-blend-mode:difference"></div>`;
+  };
+  $("#viewOpen").onclick = () => { $("#viewer").hidden = !$("#viewer").hidden; $("#viewOpen").textContent = $("#viewer").hidden ? "絵を比べる" : "閉じる"; draw(); };
+  $("#picA").onchange = $("#picB").onchange = draw;
+  document.querySelectorAll("[data-mode]").forEach(b => b.onclick = () => {
+    document.querySelectorAll("[data-mode]").forEach(x => x.classList.toggle("on", x === b)); mode = b.dataset.mode; draw(); });
+}
+
+// ---- 前の回と比べる ----
+const cols = [["started","開始"],["work_min","作業（分）"],["prompts","指示"],["corrections","指摘"],["interrupted","止めた"],
+  ["headings_used","使われた見出し"],["headings_never","使われなかった見出し"],["basis_none","根拠なし"],["diff_cells","正解との違い"],["output_tokens","出力トークン"]];
+$("#runs").innerHTML = table(cols.map(c => [c[1], c[0] === "started" ? "" : "num"]),
+  runs.map(r => `<tr${r.session === row.session ? ' style="font-weight:700"' : ""}>${cols.map(c => `<td class="${c[0] === "started" ? "" : "num"}">${esc(r[c[0]] ?? "")}</td>`).join("")}</tr>`));
+const ropts = runs.map((r, i) => `<option value="${i}">${esc(r.started)}（${esc((r.prompt || "").slice(0, 16))}）</option>`).join("");
+$("#runA").innerHTML = ropts; $("#runB").innerHTML = ropts;
+$("#runA").value = Math.max(0, idx - 1); $("#runB").value = Math.max(0, idx);
+$("#runGo").onclick = () => {
+  const a = runs[$("#runA").value], b = runs[$("#runB").value];
+  const keys = [...new Set([...Object.keys(a), ...Object.keys(b)])].filter(k => !["date","profile","session","prompt"].includes(k));
+  $("#runDiff").innerHTML = `<div class="card tbl" style="margin-top:8px">` + table([["項目"],[esc(a.started),"num"],[esc(b.started),"num"],["差","num"]],
+    keys.map(k => { const x = Number(a[k]), y = Number(b[k]), num = !isNaN(x) && !isNaN(y) && a[k] !== "" && b[k] !== "";
+      const d = num ? +(y - x).toFixed(1) : "";
+      return `<tr${d ? ' style="background:var(--soft)"' : ""}><td>${esc(k)}</td><td class="num">${esc(a[k] ?? "")}</td><td class="num">${esc(b[k] ?? "")}</td><td class="num">${d ? (d > 0 ? "+" : "") + d : ""}</td></tr>`; })) + `</div>`;
+};
+if (runs.length < 2) $("#runGo").disabled = true;
+
+// ---- 細かい記録 ----
+$("#markdown").textContent = R.markdown || "";
+</script>
+</body>
+</html>
