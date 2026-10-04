@@ -580,8 +580,10 @@ def code_report(p, file):
     lib = c.get("library")
     lo, hi = c.get("number_min", 100), c.get("number_max", 10 ** 6)
 
-    def draws(f):   # 絵を描く関数（画素の数は座標ではない）
-        return any(isinstance(n, ast.Name) and n.id in ("Image", "ImageDraw", "ImageFont")
+    def draws(f):   # 絵を描く関数（画素の数は座標ではない）。看板の絵を返す images() と、sign_art を使う関数も
+        if f.name in c.get("drawing_functions", ["images"]):
+            return True
+        return any(isinstance(n, ast.Name) and n.id in ("Image", "ImageDraw", "ImageFont", "sign_art")
                    or isinstance(n, ast.Attribute) and n.attr in ("Draw", "ImageDraw") for n in ast.walk(f))
     skip = {id(n) for f in tree.body if isinstance(f, ast.FunctionDef) and draws(f) for n in ast.walk(f)}
     skip |= {id(n) for k in ast.walk(tree) if isinstance(k, ast.keyword) and k.arg in c.get("skip_keywords", [])

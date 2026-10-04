@@ -17,10 +17,10 @@
 .idea/
 /.vscode/
 .claude/*
-# building-remodel スキル（KFC のサンプルつき）だけはコミットする
+# image2mc-builder スキル（KFC のサンプルつき）だけはコミットする
 !/.claude/skills/
 /.claude/skills/*
-!/.claude/skills/building-remodel/
+!/.claude/skills/image2mc-builder/
 /*.swp
 *.iml
 *.suo
@@ -69,7 +69,7 @@ gen/
 /tools/remodel/builds/
 /tools/remodel/out/
 # 建物ごとのデータ・生成物・個人設定はソースではないのでコミットしない（ユーザー指定 2026-10-04）
-# ただし設計の型（パーツのフォルダ）と、KFC 堺北花田の正解 v2 だけは building-remodel スキルのサンプルとして入れる（ユーザー指定 2026-10-04）
+# ただし設計の型（パーツのフォルダ）と、KFC 堺北花田の正解 v2 だけは image2mc-builder スキルのサンプルとして入れる（ユーザー指定 2026-10-04）
 /tools/remodel/designs/*
 !/tools/remodel/designs/_parts_template/
 !/tools/remodel/designs/kfc_kitahanada_v2.py

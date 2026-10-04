@@ -1,5 +1,5 @@
 """
-部品の早見表（.claude/skills/building-remodel/parts.md）を parts.py から作り直す。
+部品の早見表（.claude/skills/image2mc-builder/parts.md）を parts.py から作り直す。
 parts.py の部品を足したり引数を変えたりしたら、これを実行する: python parts_ref.py
 """
 
@@ -9,7 +9,7 @@ from pathlib import Path
 import parts
 
 HERE = Path(__file__).resolve().parent
-OUT = HERE.parents[1] / ".claude" / "skills" / "building-remodel" / "parts.md"
+OUT = HERE.parents[1] / ".claude" / "skills" / "image2mc-builder" / "parts.md"
 INNER = {"build", "roof", "ring_of", "distance_inward", "connect", "is_decor", "cells_in", "outline", "Ctx", "Blocks",
          "sign_cells"}   # 組み立ての内部（設計からは呼ばない）
 
@@ -20,14 +20,14 @@ HEAD = """# 部品の早見表（parts.py）
 
 ## 設計のフォルダの型（designs/_parts_template/）
 
-新しい建物は **`tools/remodel/designs/_parts_template/` をフォルダごと `designs/<建物名>/` にコピー**し、★ の所だけを埋める。
+新しい建物は **`tools/remodel/designs/_parts_template/` をフォルダごと `designs/<建物名>/` にコピー**し、★ を全部埋める（既定は空。何を選ぶかは [辞書](recipes.md)の「手札」）。
 建物を部位ごとのファイル（パーツ）に分け、パーツは Sonnet の Agent が1つずつ並列に書く。組み立ては `__init__.py`（`tools/remodel/assemble.py`）が自動でやる。
 
 | ファイル | だれが書く | 中身 |
 |---|---|---|
-| `base.py` | 親 | 約束。`WAY` / `EXCLUDE` / `PHOTO`、`STACK` / `ROOF` / `WINDOW_FACES` / `PILLAR_EVERY` / `PLINTH` / `PAL` / `BAND`（壁の段・屋根・窓の面・柱の間隔・土台・素材・帯のハーフ）、`SHAPE`（建物の形を整える量。`parts.grow_footprint`）、`ENTRANCE`（入口の面・扉の位置・通路までの植え込みの幅）、`footprint(geo)` / `site_cells(geo)`、`cameras(c)`（`parts.camera`）、`sections(c)`（断面） |
+| `base.py` | 親 | 約束。`WAY` / `EXCLUDE` / `PHOTO`、`STACK` / `ROOF` / `WINDOW_FACES` / `PILLAR_EVERY` / `PLINTH` / `PAL` / `BAND`（壁の段・屋根・窓の面・柱の間隔・土台・素材・帯のハーフ）、`SHAPE`（建物の形を整える量。`parts.grow_footprint`）、`ENTRANCE`（入口の型と位置。辞書「入口の型の選び方」）、`footprint(geo)` / `site_cells(geo)`、`cameras(c)`（`parts.camera`）、`sections(c)`（断面） |
 | `plan.md` | 親 | 受け持ちの表。面の長さ・質問の答え・部位表と、どの Agent がどのファイルを書くか（1行 = 1 Agent = 1ファイル） |
-| `p_<名前>.py` | Agent | パーツ1つ。下の形 |
+| `p_<名前>.py` | Agent | パーツ1つ。下の形（書き方の例は `_example_part.py`。名前が _ で始まるので組み立てには入らない） |
 | `__init__.py` | （型のまま） | 組み立て役。書き換えない |
 
 パーツの形（使う物だけ書く）:
@@ -40,8 +40,11 @@ HEAD = """# 部品の早見表（parts.py）
 | `BACKING = {名前: ブロック}` | 看板の裏のブロック（None は壁に直接） |
 | `images()` | 看板の絵 `{名前: 絵}`（下の「看板の絵」） |
 
-入口一式（衝立・通り道・植え込み・通路・扉・帯の延長・自動扉）と室内は、組み立て役が `base.py` の `ENTRANCE` から**最後に**置く（パーツに書かない）。
-衝立のポスターの位置も組み立て役が決める。パーツは絵だけを `images()` の `"poster"`（2×3）で描く。
+入口と室内は、組み立て役が `base.py` の `ENTRANCE` から**最後に**置く（パーツに書かない）:
+- `dict(kind="衝立つき", face, door_k, poster, auto, left_gap, right_gap, bed_end)` … 衝立・通り道・植え込み・左右の通路・扉・帯の延長（`front_entrance`）。
+  `poster=True` なら衝立にポスター（位置は組み立て役。パーツは絵だけを `images()` の `"poster"`（2×3）で描く）
+- `dict(kind="扉だけ", face, door_k, steps, auto)` … 壁の線の扉と段（`entrance`）。`steps` は `"landing"` / `"slab"` / `"stairs"`
+- どちらも `auto=True` ならガラスの自動扉（`auto_door`、`PLINTH = 1` が要る）。`ENTRANCE = None` なら入口を置かない
 パーツ1つだけを試す: `REMODEL_ONLY=<p_ を除いた名前> python run.py <建物名> preview <名前>`（カンマ区切りで複数）。
 
 ## part(c) の中で使えるもの（c = parts.Ctx）

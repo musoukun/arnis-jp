@@ -232,6 +232,8 @@ class Facade:
 # ---------------- 建物の本体 ----------------
 
 def build(spec, geo, seed=7):
+    if not getattr(spec, "STACK", None) or getattr(spec, "ROOF", None) is None:   # 面の長さを測る faces では止めない
+        raise SystemExit("設計の STACK と ROOF が空です。写真と手札（recipes.md）で ★ を埋めてから描く")
     c = Ctx(spec, geo, seed)
     G, F, P, put = c.G, c.F, c.pal, c.put
     stack = spec.STACK
@@ -530,7 +532,7 @@ def window_strip(c, face, k0, k1, rows=3, glass=None, recess=True, mullion=None)
 def front_entrance(c, face, door_k, screen_k=None, screen_w=4, left_gap=3, right_gap=1, bed_end=6,
                    band="mangrove_slab", walk="brick_slab", landing="bricks", bed_edge="brick_wall", bed_fill="diorite",
                    screen_edge="deepslate_brick_wall", screen_core="deepslate_bricks", bollard_post="blackstone_wall",
-                   light="lantern"):
+                   light="lantern", auto=True):
     """入口のまわり一式（辞書「入口のまわり」「扉の前の踏み台」）。extras の最後に1回呼ぶだけで、次を正しい順で置く:
       通り道（壁の1マス外、ハーフ）・衝立（壁の2マス外、両端と上は塀、上は帯の真下まで。帯とは別で塔にはつながない）・
       衝立の前を通る植え込み（塀・砂利・塀、壁の3マス外が砂利）・左右の通路（植え込みを切ってハーフ）・
@@ -539,6 +541,7 @@ def front_entrance(c, face, door_k, screen_k=None, screen_w=4, left_gap=3, right
     face: 入口の面。位置は Facade と同じ「外から見て左の角から k マス」（左の角が 0）。
       door_k: 扉（2マス）の左のマス。screen_k: 衝立の左の端（省略すると door_k-1）。screen_w: 衝立の幅
       left_gap / right_gap: 衝立と左／右の通路のあいだの植え込みのマス数。bed_end: 衝立の右の端から、右の端の塀まで何マス
+      band: 衝立の上まで前に出す帯のハーフ（None なら帯を前に出さない）。auto: ガラスの自動扉にするか（False なら開口のまま）
     戻り値: {"door": 扉の壁セル2つ, "used": auto_door の戻り値（furnish の avoid に渡す）,
             "poster": signs に足す衝立のポスター（"poster", 列, 行, 左上の額縁, 向き）, "bed": 植え込みの砂利のセル}
     （PLINTH = 1 の建物用。辞書「入口のまわり」の作り）"""
@@ -601,10 +604,11 @@ def front_entrance(c, face, door_k, screen_k=None, screen_w=4, left_gap=3, right
     entrance(c, door, face, height=3, out=1, steps="slab", step_slab=walk)   # 外は1マスだけ空ける（衝立を消さない）
     for k in (door_k, door_k + 1):                      # 扉の前の1マスだけフルブロック
         put(f.line(k, 1), G + 1, landing)
-    for k in range(kl, kend + 1):                       # 帯を衝立の上まで前に出して、通り道と衝立を覆う
-        for cell in inward(k, 2):
-            put(cell, top, f"{band}[type=bottom]")
-    used = auto_door(c, door, face)
+    if band:
+        for k in range(kl, kend + 1):                   # 帯を衝立の上まで前に出して、通り道と衝立を覆う
+            for cell in inward(k, 2):
+                put(cell, top, f"{band}[type=bottom]")
+    used = auto_door(c, door, face) if auto else set()
     return {"door": door, "used": used, "poster": entrance_poster(c, face, door_k, screen_k, screen_w), "bed": bed}
 
 
@@ -744,7 +748,7 @@ def auto_door(c, cells, face):
     return used
 
 
-# ---------------- 部位の辞書（.claude/skills/building-remodel/recipes.md）の部品 ----------------
+# ---------------- 部位の辞書（.claude/skills/image2mc-builder/recipes.md）の部品 ----------------
 
 def _name(s):
     return s.split("[")[0].split("{")[0].replace("minecraft:", "")

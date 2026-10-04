@@ -1,4 +1,4 @@
-# building-remodel スキルのテストと改善のしかた（skill_eval のプロファイル building-remodel 用）
+# image2mc-builder スキルのテストと改善のしかた（skill_eval のプロファイル image2mc-builder 用）
 
 このスキルで「一発で建つか」と「KFC だけでなく、どの建物にも使えるか」を、数字とユーザーの目で確かめる。
 
@@ -8,11 +8,11 @@
 **汎用か確かめるには、KFC 以外の建物でも必ず1回行う**。KFC だけ通っても、KFC の答えを覚えているだけかもしれない。
 
 ```text
-building-remodel スキルのテストです。写真1枚から「<建物名>」を Minecraft ワールドに建ててください。回答はすべて日本語で。
+image2mc-builder スキルのテストです。写真1枚から「<建物名>」を Minecraft ワールドに建ててください。回答はすべて日本語で。
 ■ 入力: 写真 <写真のパス>（見た目の入力はこれだけ）、OSM の way <way ID か「店名から探す」>
 ■ 位置の指示: <人が最初から伝える位置の直し。無ければこの行を消す。KFC は下の「KFC で足す指示」>
-■ 最初に .claude/skills/building-remodel/SKILL.md と recipes.md を全部読み、その手順どおりに進める
-■ 見てはいけないもの: tools/remodel/designs/ にある既存の設計と、.claude/skills/building-remodel/examples/ の画像
+■ 最初に .claude/skills/image2mc-builder/SKILL.md と recipes.md を全部読み、その手順どおりに進める
+■ 見てはいけないもの: tools/remodel/designs/ にある既存の設計と、.claude/skills/image2mc-builder/examples/ の画像
   （KFC 以外の建物なら、正解のサンプル designs/kfc_kitahanada_v2.py を完成例として読んでよい）
 ■ 分からない所は、スキルの「0. 聞いてから作る」どおりに私に質問する（質問の仕方もテストの対象）
 ■ 設計は tools/remodel/designs/<設計名>/ のフォルダに書き（スキルの Step 3）、preview・section・check を見て、プレビューの絵を私に見せて OK をもらってから build する
@@ -33,8 +33,8 @@ building-remodel スキルのテストです。写真1枚から「<建物名>」
 
 評価の道具 `tools/skill_eval/`（使い方は `tools/skill_eval/README.md`）。リポジトリの一番上で、テストが終わったあとに1回:
 ```text
-python tools\skill_eval\skill_eval.py building-remodel list
-python tools\skill_eval\skill_eval.py building-remodel report <list の番号> --code <設計名>_test --compare <設計名>_test
+python tools\skill_eval\skill_eval.py image2mc-builder list
+python tools\skill_eval\skill_eval.py image2mc-builder report <list の番号> --code <設計名>_test --compare <設計名>_test
 ```
 時間・根拠（cite）・コード・正解との違いをまとめた記録が `tools/skill_eval/reports/` に残り、`history.csv` に1行足される。
 1つずつ見るときは `report` の代わりに `time` / `cite` / `scan` / `code` / `compare`。
@@ -75,7 +75,7 @@ KFC と別の建物で同じ数字を並べると、KFC だけ良い所が「KFC
 1回の改善は、次の8つの手順で回す。速いモデル（Sonnet）で一発で建つことを目指す。
 
 1. **版を残す**: スキル・道具（`tools/remodel/*.py`）・型・正解の設計を zip にして `tools/skill_eval/versions/` に置く
-   （`building-remodel_<日時>_<何の前か>.zip`。git には入れない）。いつでも前の版に戻れるようにする
+   （`image2mc-builder_<日時>_<何の前か>.zip`。git には入れない）。いつでも前の版に戻れるようにする
 2. **テストする（Sonnet のサブエージェント）**: 渡すのは写真1枚・OSM の way 番号・スキルの3つのファイルだけ。
    答えになる設計（正解・前のテストの設計）・お手本の画像・既存のプレビューは見せない。設計名は `kfc_test<番号>`。
    サブエージェントは Agent を起動できないので、Step 3 の受け持ちの表（`plan.md`）ができた所で止まる。
@@ -88,7 +88,7 @@ KFC と別の建物で同じ数字を並べると、KFC だけ良い所が「KFC
 4. **施工の前で止め、プレビューを確かめてから施工する**: `run.py <設計> check` と、正解（v2）と同じ視点で並べた絵を作り、
    それから `build`。施工前の状態は控えに残るので `reset` で戻せる
 5. **記録を残す（skill_eval）**: サブエージェントの記録（`tasks/<id>.output`）を写して
-   `python tools\skill_eval\skill_eval.py building-remodel report <記録> --code <設計> --compare <設計> --images "正解=<v2の絵>,テスト=<テストの絵>"`。
+   `python tools\skill_eval\skill_eval.py image2mc-builder report <記録> --code <設計> --compare <設計> --images "正解=<v2の絵>,テスト=<テストの絵>"`。
    HTML の **まとめ（ゴールに届いたか・前の回との差）**・**分析と直す候補**・**処理の流れ**・**前の回と比べる**・**絵を比べる** を見る。
    比べる表は手で作らない（「前の回と比べる」で2つ選ぶ）
 6. **本人に振り返らせる**: テストした Sonnet に、会話の続きとして結果（並べた絵と、正解との違い）を見せ、

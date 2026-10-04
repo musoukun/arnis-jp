@@ -1,7 +1,7 @@
 {
-  "description": "building-remodel スキル（写真1枚から Minecraft の建物を再現する）のテストを評価する設定",
+  "description": "image2mc-builder スキル（写真1枚から Minecraft の建物を再現する）のテストを評価する設定",
   "root": "../../..",
-  "skill_dir": ".claude/skills/building-remodel",
+  "skill_dir": ".claude/skills/image2mc-builder",
   "docs": [
     {
       "file": "SKILL.md",
@@ -13,6 +13,7 @@
     {
       "file": "recipes.md",
       "levels": [
+        2,
         3
       ]
     },
@@ -31,7 +32,7 @@
         "Grep",
         "Glob"
       ],
-      "input": "building-remodel|SKILL\\.md|recipes\\.md"
+      "input": "image2mc-builder|SKILL\\.md|recipes\\.md"
     },
     {
       "name": "自分で描いた絵で出来を確かめる",
@@ -229,7 +230,7 @@
     }
   },
   "compare": {
-    "command": "python tools/remodel/run.py {name} diff .claude/skills/building-remodel/examples/kfc_kitahanada/answer_v2.json",
+    "command": "python tools/remodel/run.py {name} diff .claude/skills/image2mc-builder/examples/kfc_kitahanada/answer_v2.json",
     "default_name": "kfc_test",
     "metrics": {
       "diff_cells": "違い: (\\d+) マス"

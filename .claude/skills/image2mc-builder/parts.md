@@ -5,14 +5,14 @@
 
 ## 設計のフォルダの型（designs/_parts_template/）
 
-新しい建物は **`tools/remodel/designs/_parts_template/` をフォルダごと `designs/<建物名>/` にコピー**し、★ の所だけを埋める。
+新しい建物は **`tools/remodel/designs/_parts_template/` をフォルダごと `designs/<建物名>/` にコピー**し、★ を全部埋める（既定は空。何を選ぶかは [辞書](recipes.md)の「手札」）。
 建物を部位ごとのファイル（パーツ）に分け、パーツは Sonnet の Agent が1つずつ並列に書く。組み立ては `__init__.py`（`tools/remodel/assemble.py`）が自動でやる。
 
 | ファイル | だれが書く | 中身 |
 |---|---|---|
-| `base.py` | 親 | 約束。`WAY` / `EXCLUDE` / `PHOTO`、`STACK` / `ROOF` / `WINDOW_FACES` / `PILLAR_EVERY` / `PLINTH` / `PAL` / `BAND`（壁の段・屋根・窓の面・柱の間隔・土台・素材・帯のハーフ）、`SHAPE`（建物の形を整える量。`parts.grow_footprint`）、`ENTRANCE`（入口の面・扉の位置・通路までの植え込みの幅）、`footprint(geo)` / `site_cells(geo)`、`cameras(c)`（`parts.camera`）、`sections(c)`（断面） |
+| `base.py` | 親 | 約束。`WAY` / `EXCLUDE` / `PHOTO`、`STACK` / `ROOF` / `WINDOW_FACES` / `PILLAR_EVERY` / `PLINTH` / `PAL` / `BAND`（壁の段・屋根・窓の面・柱の間隔・土台・素材・帯のハーフ）、`SHAPE`（建物の形を整える量。`parts.grow_footprint`）、`ENTRANCE`（入口の型と位置。辞書「入口の型の選び方」）、`footprint(geo)` / `site_cells(geo)`、`cameras(c)`（`parts.camera`）、`sections(c)`（断面） |
 | `plan.md` | 親 | 受け持ちの表。面の長さ・質問の答え・部位表と、どの Agent がどのファイルを書くか（1行 = 1 Agent = 1ファイル） |
-| `p_<名前>.py` | Agent | パーツ1つ。下の形 |
+| `p_<名前>.py` | Agent | パーツ1つ。下の形（書き方の例は `_example_part.py`。名前が _ で始まるので組み立てには入らない） |
 | `__init__.py` | （型のまま） | 組み立て役。書き換えない |
 
 パーツの形（使う物だけ書く）:
@@ -25,8 +25,11 @@
 | `BACKING = {名前: ブロック}` | 看板の裏のブロック（None は壁に直接） |
 | `images()` | 看板の絵 `{名前: 絵}`（下の「看板の絵」） |
 
-入口一式（衝立・通り道・植え込み・通路・扉・帯の延長・自動扉）と室内は、組み立て役が `base.py` の `ENTRANCE` から**最後に**置く（パーツに書かない）。
-衝立のポスターの位置も組み立て役が決める。パーツは絵だけを `images()` の `"poster"`（2×3）で描く。
+入口と室内は、組み立て役が `base.py` の `ENTRANCE` から**最後に**置く（パーツに書かない）:
+- `dict(kind="衝立つき", face, door_k, poster, auto, left_gap, right_gap, bed_end)` … 衝立・通り道・植え込み・左右の通路・扉・帯の延長（`front_entrance`）。
+  `poster=True` なら衝立にポスター（位置は組み立て役。パーツは絵だけを `images()` の `"poster"`（2×3）で描く）
+- `dict(kind="扉だけ", face, door_k, steps, auto)` … 壁の線の扉と段（`entrance`）。`steps` は `"landing"` / `"slab"` / `"stairs"`
+- どちらも `auto=True` ならガラスの自動扉（`auto_door`、`PLINTH = 1` が要る）。`ENTRANCE = None` なら入口を置かない
 パーツ1つだけを試す: `REMODEL_ONLY=<p_ を除いた名前> python run.py <建物名> preview <名前>`（カンマ区切りで複数）。
 
 ## part(c) の中で使えるもの（c = parts.Ctx）
@@ -131,7 +134,7 @@ cells: 入口にする壁のセル、face: 外を向いた面（"n"/"s"/"w"/"e"�
 面の一部だけを窓にする（ほかは壁のまま）。face の面の、左の角から k0〜k1 マス目に、床の上から rows 段のガラス。
 recess: ガラスを1マス奥に引っ込める（上下の枠の影が出る）。mullion: 細い縦枠を入れる k のリスト（黒い板ガラス）。
 
-### `front_entrance(c, face, door_k, screen_k=None, screen_w=4, left_gap=3, right_gap=1, bed_end=6, band='mangrove_slab', walk='brick_slab', landing='bricks', bed_edge='brick_wall', bed_fill='diorite', screen_edge='deepslate_brick_wall', screen_core='deepslate_bricks', bollard_post='blackstone_wall', light='lantern')`
+### `front_entrance(c, face, door_k, screen_k=None, screen_w=4, left_gap=3, right_gap=1, bed_end=6, band='mangrove_slab', walk='brick_slab', landing='bricks', bed_edge='brick_wall', bed_fill='diorite', screen_edge='deepslate_brick_wall', screen_core='deepslate_bricks', bollard_post='blackstone_wall', light='lantern', auto=True)`
 
 入口のまわり一式（辞書「入口のまわり」「扉の前の踏み台」）。extras の最後に1回呼ぶだけで、次を正しい順で置く:
   通り道（壁の1マス外、ハーフ）・衝立（壁の2マス外、両端と上は塀、上は帯の真下まで。帯とは別で塔にはつながない）・
@@ -141,6 +144,7 @@ recess: ガラスを1マス奥に引っ込める（上下の枠の影が出る�
 face: 入口の面。位置は Facade と同じ「外から見て左の角から k マス」（左の角が 0）。
   door_k: 扉（2マス）の左のマス。screen_k: 衝立の左の端（省略すると door_k-1）。screen_w: 衝立の幅
   left_gap / right_gap: 衝立と左／右の通路のあいだの植え込みのマス数。bed_end: 衝立の右の端から、右の端の塀まで何マス
+  band: 衝立の上まで前に出す帯のハーフ（None なら帯を前に出さない）。auto: ガラスの自動扉にするか（False なら開口のまま）
 戻り値: {"door": 扉の壁セル2つ, "used": auto_door の戻り値（furnish の avoid に渡す）,
         "poster": signs に足す衝立のポスター（"poster", 列, 行, 左上の額縁, 向き）, "bed": 植え込みの砂利のセル}
 （PLINTH = 1 の建物用。辞書「入口のまわり」の作り）

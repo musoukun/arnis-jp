@@ -27,8 +27,8 @@ Claude Code でスキルを動かしたあと、そのセッションの記録�
    別のフォルダで開くと記録の置き場所が変わり、見つけられません。
 3. **終わったら、テストのセッションの番号を一覧で確かめて、記録を残す。**
    ```text
-   python tools\skill_eval\skill_eval.py building-remodel list
-   python tools\skill_eval\skill_eval.py building-remodel report 6 --code kfc_test --compare kfc_test
+   python tools\skill_eval\skill_eval.py image2mc-builder list
+   python tools\skill_eval\skill_eval.py image2mc-builder report 6 --code kfc_test --compare kfc_test
    ```
    `list` は最近のセッションを、番号（1 が一番新しい）・開始時刻・長さ・最初の指示の書き出しつきで並べます。
    その番号を `report` に渡します。番号は新しいセッションができるとずれるので、`list` の直後に使います。
@@ -48,7 +48,7 @@ Claude Code でスキルを動かしたあと、そのセッションの記録�
 
 1つずつ見たいときは、`report` の代わりに `time` / `cite` / `scan` / `code` / `compare` を使います（画面に出すだけで、保存しません）。
 
-スキルごとのテストの手順と改善の回し方は、プロファイルの横の説明に書く（building-remodel なら `profiles/building-remodel.md`）。
+スキルごとのテストの手順と改善の回し方は、プロファイルの横の説明に書く（image2mc-builder なら `profiles/image2mc-builder.md`）。
 
 ## 命令
 
@@ -62,7 +62,7 @@ python skill_eval.py <プロファイル> compare [名前]
 python skill_eval.py <プロファイル> report  [セッション] [--code ファイル] [--compare 名前] [--images 絵1,絵2]
 ```
 
-- `<プロファイル>`: `profiles/<名前>.json` の名前（例 `building-remodel`）
+- `<プロファイル>`: `profiles/<名前>.json` の名前（例 `image2mc-builder`）
 - `[セッション]`: 次のどれか。省略すると、一覧を出して止まります（今このコマンドを打っているセッション自体を読まないように）
   - `list` の番号（例 `6`）… いちばん簡単。番号は新しいセッションができるとずれるので、`list` の直後に使う
   - セッションID（例 `549d7bc8-e49e-4d8b-b213-ae59de2c8b50`）… ずれないので、あとで同じテストを記録し直すとき向け
@@ -109,7 +109,7 @@ python skill_eval.py <プロファイル> report  [セッション] [--code フ�
 ### compare（正解との比較）
 - プロファイルの `compare.command` を、リポジトリの一番上で走らせて、その出力を記録に入れます。`{name}` は命令の引数に置き換わります。
 - `compare.metrics` の正規表現で、出力から数字を拾って `history.csv` に入れます（例: `違い: (\d+) マス`）。
-- building-remodel では、ゲーム内で手直しした建物を `run.py <建物> capture` で正解として保存し、
+- image2mc-builder では、ゲーム内で手直しした建物を `run.py <建物> capture` で正解として保存し、
   `run.py <設計> diff <正解>` で違いを数えています。
 
 ### history.csv（移り変わり）
@@ -118,7 +118,7 @@ python skill_eval.py <プロファイル> report  [セッション] [--code フ�
 
 ## 別のスキルに使う
 
-`profiles/building-remodel.json` をコピーして `profiles/<スキル名>.json` を作り、次を書き換えます。
+`profiles/image2mc-builder.json` をコピーして `profiles/<スキル名>.json` を作り、次を書き換えます。
 
 | 項目 | 書くこと | 無くてもよいか |
 |---|---|---|

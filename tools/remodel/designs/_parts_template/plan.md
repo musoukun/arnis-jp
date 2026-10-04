@@ -4,34 +4,46 @@
 
 ## 約束
 - 高さの基準: 地面 `c.G`、床 `c.F`（地面+1）、帯の段 `c.top`。接する部位は相手の基準で書く
-- 位置: `parts.Facade(c, 面).at(k)`（外から見て左の角から k マス）。座標（x・z の数）を直書きしない
+- 位置: `parts.Facade(c, 面).at(k, out=…)`（外から見て左の角から k マス）。座標（x・z の数）を直書きしない
 - 面の長さ（`python run.py <建物名> faces` の結果）: ★
 - 質問の答え（フォームの1行）: ★
-- 部位表: ★（部位・ブロックか飾りか・形・大きさ・位置（面と左の角から何マス）・高さの基準・向き）
+- 入口の型（recipes.md の「入口の型の選び方」）: ★ 衝立つき／扉だけ、自動扉か、ポスターがあるか（組み立て役が base.py の ENTRANCE から置く）
+
+## 手札の表（recipes.md の「手札」の行ごとに、写真で見た物と選んだ作り。無い物は「無し」と書く）
+| 部位 | 写真で見た物 | 選んだ作り | 受け持ち |
+|---|---|---|---|
+| 屋根 | ★ | ★ | base.py |
+| 屋根の縁・屋上の物 | ★ | ★ | ★ |
+| 帯・軒 | ★ | ★ | ★ |
+| 壁の段・窓・柱 | ★ | ★ | base.py ／ ★ |
+| 足元 | ★ | ★ | base.py |
+| 入口 | ★ | ★ | 組み立て役 |
+| 看板（1枚ずつ） | ★ | ★（何に付いているか → 取り付け方） | ★ |
+| 外まわり | ★ | ★ | ★ |
+
+## 部位表（1行1部位。部位・ブロックか飾りか・形・大きさ・位置（面と左の角から何マス）・高さの基準・向き・根拠）
+★
 
 ## 受け持ち（1行 = 1 Agent = 1ファイル。並列に書く）
-写真に無い部位の行は消す。看板は1枚ずつ、面は1面ずつ別の行にする。
-型からコピーした `p_roof.py`・`p_band.py`・`p_sign_example.py` は書き方の例。受け持ちの Agent が上書きし、表に無い例のファイルは親が消す。
+手札の表で「無し」でない部位だけ行にする。**看板は1枚ずつ**、屋上・帯・面ごとの作り・外まわりも別々の行にする。
+ファイル名は部位の種類で付ける（例 `p_roof.py`・`p_band.py`・`p_face_<面>.py`・`p_outside.py`・`p_sign_<看板の名前>.py`）。
+書き方の例は `_example_part.py`（組み立てには入らない）。
 
 | ファイル | ORDER | 書く物 | 使う部品・型 | 渡す数（部位表から） |
 |---|---|---|---|---|
-| `p_roof.py` | 10 | 塔・屋上の柵 | `box_on_roof`・`lattice` | ★ |
-| `p_band.py` | 15 | 帯と軒下の吊りランタン | `eave_slab` | ★ |
-| `p_face_n.py` | 20 | 北の面（一部の窓・柱・帯の下の段・壁沿いの植え込み・車止め） | `window_strip`・`planter_ring`・`bollard` | ★ |
-| `p_outside.py` | 30 | 外まわり（立て看板の足など。足は根元のマスから1本） | `c.put` | ★（立て看板は根元のマスと足の種類） |
-| `p_sign_<名前>.py` | 40 | 看板1枚（位置・裏・絵） | `sign_art`（読んで描く） | ★ |
-| `p_sign_poster.py` | 40 | 衝立のポスターの**絵だけ**（`images()` に `"poster"`。2×3。位置は組み立て役が置く） | `sign_art.shapes`（読んで描く） | ★ |
+| ★ | ★ | ★ | ★ | ★ |
 
-入口一式（衝立・通り道・植え込み・通路・扉・帯の延長・自動扉）と室内は、組み立て役が base.py の `ENTRANCE` から最後に置く（パーツに書かない）。
+入口（衝立・通り道・扉・段・自動扉）と室内は、組み立て役が base.py の `ENTRANCE` から最後に置く（パーツに書かない）。
+衝立にポスターがある時だけ、`p_sign_poster.py` が `images()` の `"poster"`（2×3）の絵を描く（位置は組み立て役）。
 
 ## 各 Agent に渡す依頼文（行ごとに <…> を埋める）
 ```text
-building-remodel の建物のパーツを1つ書いてください。回答は日本語で。
-■ 読む: tools/remodel/designs/<建物名>/plan.md と base.py、.claude/skills/building-remodel/parts.md（部品の早見表）、
+image2mc-builder の建物のパーツを1つ書いてください。回答は日本語で。
+■ 読む: tools/remodel/designs/<建物名>/plan.md と base.py、.claude/skills/image2mc-builder/parts.md（部品の早見表）、
   recipes.md の「<部位の見出し>」、写真 <パス>（<見る所: 例 北の面・左上の看板>）
 ■ 書く: tools/remodel/designs/<建物名>/<ファイル> だけ。受け持ち: <表の行をそのまま>
   ほかのファイル（base.py・plan.md・ほかのパーツ・parts.py などの道具）は書き換えない
-■ 形: 型の例 designs/_parts_template/p_*.py と同じ（ORDER・part(c)・signs(geo, c)・BACKING・images() の使う物だけ）
+■ 形: 書き方の例 designs/<建物名>/_example_part.py と同じ（ORDER・part(c)・signs(geo, c)・BACKING・images() の使う物だけ）
 ■ 確かめ: cd tools/remodel して REMODEL_ONLY=<p_ を除いた名前> python run.py <建物名> preview <名前> と check。絵を1回見て、写真と比べる
 ■ 報告（短く）: 書いたファイル、置いた物の数を部位表の数と並べた表、迷った所
 ```
