@@ -8,8 +8,7 @@
 import json
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[2]
-WORLD = ROOT / "minecraft-server" / "world"
+from world_reader import ROOT, WORLD
 
 
 def point_in_polygon(x, z, poly) -> bool:

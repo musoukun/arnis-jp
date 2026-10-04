@@ -24,6 +24,22 @@ _PLANTS = ("short_grass", "tall_grass", "fern", "dandelion", "poppy", "orchid", 
 
 FULL = (0, 0, 0, 1, 1, 1)
 EMPTY = (0, 0, 0, 0, 0, 0)
+NBOX = 5  # 1ブロックを最大いくつの箱で描くか（柵: 柱＋横棒2本×2方向）
+
+
+def _connected(p):
+    """つながる形の向き（east/west/north/south が true / low / tall のもの）。"""
+    return {d for d in ("east", "west", "north", "south") if p.get(d, "false") not in ("false", "none")}
+
+
+def _arms(conn, lo, hi, w0, w1, extent=(0.5, 0.5)):
+    """中心から、つながる向きへ伸びる腕（x 方向と z 方向に1本ずつにまとめる）。"""
+    boxes = []
+    if conn & {"east", "west"}:
+        boxes.append((0 if "west" in conn else extent[0], lo, w0, 1 if "east" in conn else extent[1], hi, w1))
+    if conn & {"north", "south"}:
+        boxes.append((w0, lo, 0 if "north" in conn else extent[0], w1, hi, 1 if "south" in conn else extent[1]))
+    return boxes
 _FACE_SHADE = np.array([0.6, 1.0, 0.8, 0.6, 0.5, 0.8], dtype=np.float32)  # +x,+y,+z,-x,-y,-z
 
 
@@ -34,8 +50,24 @@ def _props(state: str) -> dict:
     return dict(kv.split("=") for kv in inner.split(","))
 
 
+# プレビュー専用の作り物のブロック（看板の地図アートなど）: {状態文字列: (箱の一覧, 16x16x4 のテクスチャ)}
+CUSTOM = {}
+
+
+def register_panel(key: str, image, facing: str):
+    """看板の1マス分の絵（PIL 画像）を、額縁と同じ薄い板として描けるように登録する。facing は額縁の向き。"""
+    box = {"west": (15 / 16, 0, 0, 1, 1, 1), "east": (0, 0, 0, 1 / 16, 1, 1),
+           "north": (0, 0, 15 / 16, 1, 1, 1), "south": (0, 0, 0, 1, 1, 1 / 16)}[facing]
+    img = image.convert("RGBA").resize((16, 16))
+    if facing in ("north", "east"):   # 正面から見たとき左右が逆になる向き
+        img = img.transpose(Image.FLIP_LEFT_RIGHT)
+    CUSTOM[key] = ((box,), np.asarray(img, dtype=np.float32) / 255.0)
+
+
 def block_boxes(state: str):
     """状態文字列 → ボクセル内の箱 2 つ（局所座標 0..1）。描かないなら None。"""
+    if state in CUSTOM:
+        return CUSTOM[state][0]
     state = state.split("{")[0]  # ブロックエンティティのデータ（旗の模様など）は形に関係ない
     name = state.replace("minecraft:", "").split("[")[0]
     p = _props(state)
@@ -53,8 +85,17 @@ def block_boxes(state: str):
         step = {"east": (.5, ylo, 0, 1, yhi, 1), "west": (0, ylo, 0, .5, yhi, 1),
                 "south": (0, ylo, .5, 1, yhi, 1), "north": (0, ylo, 0, 1, yhi, .5)}[f]
         return main, step
-    if name.endswith("_wall") or (name.endswith("_fence") and "gate" not in name):
-        return (.25, 0, .25, .75, 1, .75), EMPTY
+    if name.endswith("_fence") and "gate" not in name:
+        conn = _connected(p)
+        return tuple([(.375, 0, .375, .625, 1, .625)]
+                     + _arms(conn, .375, .5625, .4375, .5625) + _arms(conn, .75, .9375, .4375, .5625))
+    if name.endswith("_wall"):
+        return tuple([(.25, 0, .25, .75, 1, .75)] + _arms(_connected(p), 0, .875, .3125, .6875))
+    if name.endswith("glass_pane") or name.endswith("_bars"):
+        conn = _connected(p)
+        if not conn:
+            return ((.4375, 0, .4375, .5625, 1, .5625),)
+        return tuple(_arms(conn, 0, 1, .4375, .5625, (.4375, .5625)))
     if name.endswith("_carpet"):
         return (0, 0, 0, 1, 1 / 16, 1), EMPTY
     thin = {"north": (0, 0, 13 / 16, 1, 1, 1), "south": (0, 0, 0, 1, 1, 3 / 16),
@@ -72,6 +113,8 @@ def block_boxes(state: str):
 
 def _textures(state: str):
     """(側面テクスチャ, 上面テクスチャ) を 16x16x4 で返す。"""
+    if state in CUSTOM:
+        return CUSTOM[state][1], CUSTOM[state][1]
     state = state.split("{")[0]
     name = state.replace("minecraft:", "").split("[")[0]
     names = _tex_names()
@@ -120,7 +163,7 @@ class VoxelScene:
                 self.grid[gx, gy, gz] = index[s]
         n = len(states)
         self.states = states
-        self.box = np.zeros((n, 2, 6), dtype=np.float32)
+        self.box = np.zeros((n, NBOX, 6), dtype=np.float32)
         self.drawn = np.zeros(n, dtype=bool)
         self.tex_side = np.zeros((n, 16, 16, 4), dtype=np.float32)
         self.tex_top = np.zeros((n, 16, 16, 4), dtype=np.float32)
@@ -129,6 +172,7 @@ class VoxelScene:
             if boxes is None:
                 continue
             self.drawn[i] = True
+            boxes = list(boxes)[:NBOX] + [EMPTY] * (NBOX - len(boxes))
             self.box[i] = np.array(boxes, dtype=np.float32)
             self.tex_side[i], self.tex_top[i] = _textures(s)
         self.grid[~self.drawn[self.grid]] = 0
@@ -140,8 +184,9 @@ def _sky(dirs):
 
 
 def render_view(scene: VoxelScene, pos, yaw, pitch, width=854, height=480, vfov=70.0,
-                max_steps=400) -> Image.Image:
-    """Minecraft の F3 表示と同じ yaw/pitch（度）で、pos（目の位置）から見た絵を描く。"""
+                max_steps=400, with_mask=False):
+    """Minecraft の F3 表示と同じ yaw/pitch（度）で、pos（目の位置）から見た絵を描く。
+    with_mask=True なら (絵, 何かに当たった画素の bool 配列 (height,width)) を返す。"""
     yr, pr = math.radians(yaw), math.radians(pitch)
     f = np.array([-math.sin(yr) * math.cos(pr), -math.sin(pr), math.cos(yr) * math.cos(pr)])
     r = np.cross(f, [0, 1, 0]); r /= np.linalg.norm(r)
@@ -179,7 +224,7 @@ def render_view(scene: VoxelScene, pos, yaw, pitch, width=854, height=480, vfov=
             a = active[cand]
             best_t = np.full(cand.size, np.inf)
             best_face = np.zeros(cand.size, dtype=np.int64)
-            for k in range(2):
+            for k in range(NBOX):
                 b = scene.box[ids[cand], k]
                 lo = v[cand] + b[:, :3]
                 hi = v[cand] + b[:, 3:]
@@ -231,6 +276,8 @@ def render_view(scene: VoxelScene, pos, yaw, pitch, width=854, height=480, vfov=
         tmax[active, axis] += tdelta[active, axis]
     color += trans[:, None] * _sky(dirs)
     img = (np.clip(color, 0, 1) * 255).astype(np.uint8).reshape(height, width, 3)
+    if with_mask:
+        return Image.fromarray(img), (trans < 0.5).reshape(height, width)
     return Image.fromarray(img)
 
 

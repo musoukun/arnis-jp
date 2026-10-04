@@ -7,13 +7,15 @@
 
 import io
 import math
+import os
 import zlib
 from pathlib import Path
 
 import nbtlib
 
 ROOT = Path(__file__).resolve().parents[2]
-WORLD = ROOT / "minecraft-server" / "world"
+# 既定はサーバーのワールド。REMODEL_WORLD で別のワールド（バックアップ等）を読める（preview 専用）
+WORLD = Path(os.environ.get("REMODEL_WORLD") or ROOT / "minecraft-server" / "world")
 
 
 def _state_string(entry) -> str:

@@ -17,8 +17,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from block_colors import rgb_to_lab
 
-ROOT = Path(__file__).resolve().parents[2]
-WORLD = ROOT / "minecraft-server" / "world"
+from world_reader import ROOT, WORLD
 FONT_BOLD = "C:/Windows/Fonts/BIZ-UDGothicB.ttc"
 SIZE = 128
 

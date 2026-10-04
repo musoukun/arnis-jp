@@ -35,6 +35,8 @@ class Construction:
     def __init__(self, name: str, cells: set, y0: int, y1: int):
         self.name = name
         self.cells = set(cells)
+        self.site = set(cells)      # 丸ごと空にしてよいセル（敷地）
+        self.demolish = set()       # 敷地の外にはみ出した、元の建物の残り（ここだけ空にする）
         self.y0, self.y1 = y0, y1
         self.dir = BUILDS / name
         self.dir.mkdir(parents=True, exist_ok=True)
@@ -65,6 +67,43 @@ class Construction:
         d = json.loads(path.read_text(encoding="utf-8"))
         return {(x, y, z): d["palette"][i] for x, y, z, i in d["blocks"]}
 
+    def find_connected(self, footprint: set, ground_y: int, protect: set, radius: int = 6) -> set:
+        """元の建物の土台（footprint）の上のブロックから、つながっているブロックを全部たどる（26近傍）。
+        土台から radius マスまで、protect（ほかの建物のセル）には入らない。敷地の外の分だけ返す。"""
+        with rcon() as m:
+            m.command("save-all flush")
+        xs, zs = [c[0] for c in footprint], [c[1] for c in footprint]
+        snap = load_area(min(xs) - radius, min(zs) - radius, max(xs) + radius, max(zs) + radius,
+                         y0=ground_y + 1, y1=self.y1)
+        near = {(x + dx, z + dz) for (x, z) in footprint
+                for dx in range(-radius, radius + 1) for dz in range(-radius, radius + 1)}
+        allowed = (near - protect) | footprint
+        solid = {p for p in snap.blocks if (p[0], p[2]) in allowed}
+        seen = {p for p in solid if (p[0], p[2]) in footprint}
+        todo = list(seen)
+        while todo:
+            x, y, z = todo.pop()
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for dz in (-1, 0, 1):
+                        q = (x + dx, y + dy, z + dz)
+                        if q in solid and q not in seen:
+                            seen.add(q)
+                            todo.append(q)
+        return {p for p in seen if (p[0], p[2]) not in self.site}
+
+    def add_demolition(self, blocks: set, source_world: Path):
+        """敷地の外の残りを解体の対象に加える（そのセルの元の状態も控えに足すので reset で戻せる）。"""
+        if not blocks:
+            return
+        self.demolish |= set(blocks)
+        self.cells |= {(x, z) for x, _, z in blocks}
+        xs = [c[0] for c in self.cells]
+        zs = [c[1] for c in self.cells]
+        self.box = (min(xs), min(zs), max(xs), max(zs))
+        self.extend_baseline(source_world)
+        print(f"解体: 敷地の外の残り {len(blocks)} ブロック（{len({(x, z) for x, _, z in blocks})} 列）")
+
     def extend_baseline(self, source_world: Path):
         """敷地を広げたとき、控えに無いセルの元の状態を source_world（生成直後のワールドのコピー）から足す。"""
         path = self.dir / "baseline.json"
@@ -74,6 +113,8 @@ class Construction:
         if not missing:
             return 0
         xs, zs = [c[0] for c in missing], [c[1] for c in missing]
+        with rcon() as m:
+            m.command("save-all flush")
         snap = load_area(min(xs), min(zs), max(xs), max(zs), y0=self.y0, y1=self.y1, world=source_world)
         palette = d["palette"]
         idx = {s: i for i, s in enumerate(palette)}
@@ -142,6 +183,36 @@ class Construction:
         n = self.send(self.baseline(), self.read_world())
         print(f"baseline に戻しました（{n} ブロック変更）")
 
+    def place_ordered(self, blocks, label="仕掛け", verify=False):
+        """ピストンや飾りなど、置く順番で状態が決まるものを、書いた順に setblock する（施工の後に呼ぶ）。
+        verify=True なら置いた後に1つずつワールドを確かめ、無い物を報告する（飾りが辞書どおり付いたかの確認）。"""
+        if not blocks:
+            return
+        x0, z0, x1, z1 = self.box
+        with rcon() as m:
+            m.command(f"forceload add {x0} {z0} {x1} {z1}")
+            time.sleep(2)
+            try:
+                for (x, y, z, s) in blocks:
+                    r = m.command(f"setblock {x} {y} {z} {s}")
+                    if any(w in r for w in ("Unknown", "Incorrect", "Expected", "not loaded", "Invalid")):
+                        raise RuntimeError(f"setblock {x} {y} {z} {s} -> {r}")
+                missing = []
+                if verify:
+                    time.sleep(1)
+                    for (x, y, z, s) in blocks:
+                        name = s.split("[")[0].split("{")[0]
+                        if "passed" not in m.command(f"execute if block {x} {y} {z} {name}"):
+                            missing.append((x, y, z, name))
+            finally:
+                m.command(f"forceload remove {x0} {z0} {x1} {z1}")
+        print(f"{label}: {len(blocks)} 個を順番に設置")
+        if verify:
+            if missing:
+                print(f"  {label}が {len(missing)} 個付いていません（支えが無いと外れる）:", missing[:10])
+            else:
+                print(f"  {label}は全部付いていることを確かめました")
+
     def place_frames(self, frames):
         """敷地内の額縁を全部消してから、frames = [(x, y, z, facing, map_id)] を固定・透明で置く。
         facing は west/east/north/south。支えのブロックは先に置いておくこと。"""
@@ -167,7 +238,9 @@ class Construction:
         design = {p: norm(s) for p, s in design.items()}
         self.check_inside(design)
         base = self.baseline()
-        target = {p: (AIR if p[1] >= clear_from_y else s) for p, s in base.items()}
+        # 敷地は clear_from_y より上を丸ごと空に、敷地の外は元の建物の残り（demolish）だけ空にする
+        target = {p: (AIR if ((p[0], p[2]) in self.site and p[1] >= clear_from_y) or p in self.demolish else s)
+                  for p, s in base.items()}
         target.update(design)
         t = time.time()
         n = self.send(target, self.read_world())

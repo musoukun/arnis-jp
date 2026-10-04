@@ -16,7 +16,11 @@
 # IDE/editor files
 .idea/
 /.vscode/
-.claude/
+.claude/*
+# building-remodel スキル（KFC のサンプルつき）だけはコミットする
+!/.claude/skills/
+/.claude/skills/*
+!/.claude/skills/building-remodel/
 /*.swp
 *.iml
 *.suo
@@ -61,6 +65,15 @@ gen/
 !/tools/remodel/
 /tools/remodel/builds/
 /tools/remodel/out/
+# 建物ごとのデータ・生成物・個人設定はソースではないのでコミットしない（ユーザー指定 2026-10-04）
+# ただし KFC 堺北花田の設計だけは building-remodel スキルのサンプルとして入れる（ユーザー指定 2026-10-04）
+/tools/remodel/designs/*
+!/tools/remodel/designs/kfc_kitahanada.py
+/tools/remodel/specs/
+/tools/remodel/builds*/
+/tools/remodel/block_catalog.json
+/tools/remodel/view.json
+/tools/remodel/cmp.py
 __pycache__/
 
 # Miscellaneous
