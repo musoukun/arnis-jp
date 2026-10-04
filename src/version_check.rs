@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::error::Error;
 use std::time::Duration;
 
-const LATEST_RELEASE_API_URL: &str = "https://api.github.com/repos/musoukun/arnis-jp/releases/latest";
+const LATEST_RELEASE_API_URL: &str =
+    "https://api.github.com/repos/musoukun/arnis-jp/releases/latest";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReleaseAsset {

@@ -2901,6 +2901,10 @@ pub(crate) fn highway_block_range(
     if scale < 1.0 {
         // max(1): scaling must never collapse a road to zero width.
         block_range = (((block_range as f64) * scale).floor() as i32).max(1);
+    } else if scale > 1.0 {
+        // arnis-jp: 建物や敷地は --scale で広がるので、道路の幅も広げる。
+        // ただし縮尺より 0.1 小さい倍率にする（1.4 なら 1.3 倍。再現する建物の幅と同じく、見た目でちょうどよい広さ）
+        block_range = ((block_range as f64) * (scale - 0.1).max(1.0)).round() as i32;
     }
 
     block_range
