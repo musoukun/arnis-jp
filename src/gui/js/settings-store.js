@@ -41,7 +41,8 @@ const SETTINGS = [
   { id: 'wide-roads-toggle', kind: 'checkbox', store: OWN },
   { id: 'bare-bicycle-parking-toggle', kind: 'checkbox', store: OWN },
   { id: 'fill-split-buildings-toggle', kind: 'checkbox', store: OWN },
-  { id: 'elevated-height-slider', kind: 'number', store: OWN },
+  { id: 'tall-elevated-toggle', kind: 'checkbox', store: OWN },
+  { id: 'elevated-ratio-slider', kind: 'number', store: OWN },
 
   // World
   { id: 'gamemode-group', kind: 'segmented', store: OWN, valueAttr: 'data-gamemode' },

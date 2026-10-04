@@ -38,7 +38,7 @@
   "summary_gamemode": "ゲームモード",
   "summary_world_time": "時刻",
   "summary_perceived": "体感サイズ",
-  "summary_elevated_height": "高架の高さ",
+  "summary_elevated_height": "高架を高く",
   "settings_section_perceived": "体感リアルサイズ",
   "settings_nav_perceived": "道路、高架、建物",
   "settings_section_perceived_desc": "Minecraft のプレイヤーから見て、実物らしく感じる大きさにします。",
@@ -50,6 +50,8 @@
   "bare_bicycle_parking_desc": "屋根・柱・壁を付けません。",
   "fill_split_buildings": "分割建物の高さをそろえる",
   "fill_split_buildings_desc": "いくつかの形に分かれた建物の低い部分（ショッピングモールの先端など）を、一番大きい部分の高さにそろえます。",
-  "elevated_height": "高架の高さ",
-  "elevated_height_desc": "高架 1 段ぶんと桁下の高さ（ブロック）。元の Arnis は 6 です。"
+  "tall_elevated": "高架を高くする",
+  "tall_elevated_desc": "高架の高さを 6 × 倍率 × 高さの倍率 にし（倍率 1.4 で 10 ブロック）、橋脚を灰色のコンクリートの柱にします。オフなら元の Arnis の 6 です。",
+  "elevated_ratio": "高架の高さの倍率",
+  "elevated_ratio_desc": "6 × ワールド倍率 × この値 が高架の高さになります（1.2 で、倍率 1.4 なら 10）。"
 }

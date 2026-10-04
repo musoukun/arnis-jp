@@ -5,7 +5,8 @@
 //!
 //! - 道路の幅: 1 車線 3.25m × 倍率 × (倍率 − 0.1)（1.4 で 6 マス、偶数幅は片側に1マス足す）。
 //!   歩道・小道は「倍率 − 0.1」倍
-//! - 高架の高さ: 1 層ぶんの段差・桁下・重なる橋の間（upstream は 6 ブロック）
+//! - 高架の高さ: 1 層ぶんの段差・桁下・重なる橋の間 = 6 × 倍率 × 1.2（1.4 で 10、upstream は 6 ブロック）。
+//!   部品の橋の橋脚は灰色のコンクリートの柱で、台座の下から地面まで立てる（bridge_modules.rs）
 //! - 自転車置き場: 屋根・柱・壁を作らず床だけ
 //! - 分割建物: 1 つの建物が複数ポリゴンに分かれているとき、低い側（イオンモールの
 //!   先端などのいびつな部分）を大きい側の高さにそろえる
@@ -20,16 +21,30 @@ use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 /// upstream arnis の高架の段差・桁下
 pub const UPSTREAM_ELEVATED_HEIGHT: i32 = 6;
 
-// 既定は CLI と同じ（すべてオン、高架 8）。テストもこの値で動く。
+// 既定は CLI と同じ（すべてオン）。高架はテストが倍率を持たないので、これまでの 8 のまま。
 static WIDE_ROADS: AtomicBool = AtomicBool::new(true);
 static ELEVATED_HEIGHT: AtomicI32 = AtomicI32::new(8);
 static BARE_BICYCLE_PARKING: AtomicBool = AtomicBool::new(true);
 static FILL_SPLIT_BUILDINGS: AtomicBool = AtomicBool::new(true);
+static TALL_ELEVATED: AtomicBool = AtomicBool::new(true);
+
+/// 高架 1 層ぶんの高さ。「高架を高くする」がオンなら 6 × ワールド倍率 × ratio を四捨五入
+/// （ユーザー 2026-10-05「倍率 1.4 で高架は 10 にしたい」: 6 × 1.4 × 1.2 = 10.08）。オフなら upstream の 6。
+pub fn elevated_height_for(tall: bool, scale: f64, ratio: f64) -> i32 {
+    if !tall {
+        return UPSTREAM_ELEVATED_HEIGHT;
+    }
+    ((UPSTREAM_ELEVATED_HEIGHT as f64 * scale * ratio).round() as i32).clamp(4, 24)
+}
 
 /// 生成を始める前に、CLI / GUI の設定を一度だけ反映する
 pub fn configure(args: &crate::args::Args) {
     WIDE_ROADS.store(args.wide_roads, Ordering::Relaxed);
-    ELEVATED_HEIGHT.store(args.elevated_height, Ordering::Relaxed);
+    ELEVATED_HEIGHT.store(
+        elevated_height_for(args.tall_elevated, args.scale, args.elevated_ratio),
+        Ordering::Relaxed,
+    );
+    TALL_ELEVATED.store(args.tall_elevated, Ordering::Relaxed);
     BARE_BICYCLE_PARKING.store(args.bare_bicycle_parking, Ordering::Relaxed);
     FILL_SPLIT_BUILDINGS.store(args.fill_split_buildings, Ordering::Relaxed);
 }
@@ -37,6 +52,12 @@ pub fn configure(args: &crate::args::Args) {
 /// 高架 1 層ぶんの高さ、道路の上の桁下、上下に重なる橋の間（すべて同じ値）
 pub fn elevated_headroom() -> i32 {
     ELEVATED_HEIGHT.load(Ordering::Relaxed)
+}
+
+/// 部品の橋の橋脚を、図面の砂岩の柱ではなく灰色のコンクリートの柱にするか（「高架を高くする」と同じ）。
+/// 図面の柱は路面の 8 段下までしか描かれておらず、高さを変えると途中で切れたり細く伸びたりするため。
+pub fn concrete_piers() -> bool {
+    TALL_ELEVATED.load(Ordering::Relaxed)
 }
 
 /// 1 車線の実際の幅（日本の一般道の標準的な車線）
@@ -73,4 +94,17 @@ pub fn bare_bicycle_parking(tags: &HashMap<String, String>) -> bool {
 /// 分割された建物の低い側を、大きい側の高さにそろえるか
 pub fn fill_split_buildings() -> bool {
     FILL_SPLIT_BUILDINGS.load(Ordering::Relaxed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn elevated_height_is_six_times_scale_times_ratio() {
+        assert_eq!(elevated_height_for(true, 1.4, 1.2), 10);
+        assert_eq!(elevated_height_for(true, 1.3, 1.2), 9);
+        assert_eq!(elevated_height_for(true, 1.0, 1.2), 7);
+        assert_eq!(elevated_height_for(false, 1.4, 1.2), UPSTREAM_ELEVATED_HEIGHT);
+    }
 }

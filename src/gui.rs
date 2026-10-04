@@ -1417,7 +1417,8 @@ fn gui_start_generation(
     plateau_enabled: bool,
     // arnis-jp: 「体感リアルサイズ」の各調整
     wide_roads: bool,
-    elevated_height: i32,
+    tall_elevated: bool,
+    elevated_ratio: f64,
     bare_bicycle_parking: bool,
     fill_split_buildings: bool,
 ) -> Result<(), String> {
@@ -1725,7 +1726,12 @@ fn gui_start_generation(
                 gsi_3d: None, // GSI 3D requires an external GML file: CLI only (--gsi-3d)
                 plateau: plateau_enabled,
                 wide_roads,
-                elevated_height: elevated_height.clamp(4, 16),
+                tall_elevated,
+                elevated_ratio: if elevated_ratio.is_finite() {
+                    elevated_ratio.clamp(0.5, 3.0)
+                } else {
+                    1.2
+                },
                 bare_bicycle_parking,
                 fill_split_buildings,
                 interior: interior_enabled,

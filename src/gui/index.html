@@ -521,16 +521,29 @@
                 </div>
 
                 <div class="settings-row setting-tile">
-                  <label for="elevated-height-slider" class="setting-label">
+                  <label for="tall-elevated-toggle" class="setting-label">
                     <svg class="icon setting-icon" aria-hidden="true"><use href="#i-arrow-up"></use></svg>
                     <span class="setting-text">
-                      <span class="setting-heading"><span data-localize="elevated_height">Elevated Road Height</span></span>
-                      <span class="setting-desc" data-localize="elevated_height_desc">Blocks per elevated level and under it. Arnis uses 6.</span>
+                      <span class="setting-heading"><span data-localize="tall_elevated">Taller Elevated Roads</span></span>
+                      <span class="setting-desc" data-localize="tall_elevated_desc">Height 6 × scale × ratio (10 at 1.4) with concrete piers. Off: Arnis's 6.</span>
                     </span>
                   </label>
                   <div class="settings-control">
-                    <input type="range" id="elevated-height-slider" name="elevated-height-slider" min="4" max="16" step="1" value="8">
-                    <span id="elevated-height-value" class="setting-value">8</span>
+                    <input type="checkbox" class="switch" id="tall-elevated-toggle" name="tall-elevated-toggle" checked>
+                  </div>
+                </div>
+
+                <div class="settings-row setting-tile">
+                  <label for="elevated-ratio-slider" class="setting-label">
+                    <svg class="icon setting-icon" aria-hidden="true"><use href="#i-sliders"></use></svg>
+                    <span class="setting-text">
+                      <span class="setting-heading"><span data-localize="elevated_ratio">Elevated Height Ratio</span></span>
+                      <span class="setting-desc" data-localize="elevated_ratio_desc">The ratio in 6 × scale × ratio.</span>
+                    </span>
+                  </label>
+                  <div class="settings-control">
+                    <input type="range" id="elevated-ratio-slider" name="elevated-ratio-slider" min="0.5" max="3" step="0.05" value="1.2">
+                    <span id="elevated-ratio-value" class="setting-value">1.20</span>
                   </div>
                 </div>
               </div>

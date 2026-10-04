@@ -35,7 +35,7 @@
   "summary_gamemode": "Game mode",
   "summary_world_time": "Time",
   "summary_perceived": "Perceived size",
-  "summary_elevated_height": "Elevated height",
+  "summary_elevated_height": "Tall elevated",
   "settings_section_perceived": "Perceived Real Size",
   "settings_nav_perceived": "Roads, elevated roads, buildings",
   "settings_section_perceived_desc": "Sizes that look real to a Minecraft player.",
@@ -47,6 +47,8 @@
   "bare_bicycle_parking_desc": "Only a floor: no roof, posts or walls.",
   "fill_split_buildings": "Fill Split Buildings",
   "fill_split_buildings_desc": "Raises the low pieces of a building split into several shapes to its tallest piece.",
-  "elevated_height": "Elevated Road Height",
-  "elevated_height_desc": "Blocks per elevated level and under it. Arnis uses 6."
+  "tall_elevated": "Taller Elevated Roads",
+  "tall_elevated_desc": "Height 6 × scale × ratio (10 at 1.4) with grey concrete piers. Off: Arnis's 6.",
+  "elevated_ratio": "Elevated Height Ratio",
+  "elevated_ratio_desc": "Elevated height is 6 × world scale × this value (1.2 gives 10 at scale 1.4)."
 }

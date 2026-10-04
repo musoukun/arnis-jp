@@ -270,6 +270,7 @@ pub fn sweep_module(
     }
     let open_left = open_left * 2 >= path.len();
     let open_right = open_right * 2 >= path.len();
+    let concrete = module.has_pillars && crate::perceived_size::concrete_piers();
 
     for (i, &(x, deck_y, z, (px, pz))) in path.iter().enumerate() {
         let (lim_left, lim_right) = limits[i];
@@ -325,6 +326,13 @@ pub fn sweep_module(
                 if *dy <= -PILLAR_FOOT_MIN_DEPTH && surface.support_blocked(bx, bz, deck_y) {
                     continue;
                 }
+                // arnis-jp: the schematic's pier shaft gives way to a concrete column below.
+                if concrete
+                    && *dy <= -PILLAR_FOOT_MIN_DEPTH
+                    && is_pillar_material(block.block)
+                {
+                    continue;
+                }
                 editor.set_block_with_properties_absolute(
                     rotated_block(block, k),
                     bx,
@@ -345,8 +353,18 @@ pub fn sweep_module(
                     if surface.support_blocked(bx, bz, deck_y) {
                         continue;
                     }
-                    let bottom = deck_y + dy;
                     let ground = editor.get_ground_level(bx, bz);
+                    if concrete {
+                        // arnis-jp: one grey concrete column from under the pier cap to the
+                        // ground, whatever the deck height.
+                        let top = deck_y - PILLAR_FOOT_MIN_DEPTH;
+                        for y in (ground..=top).rev().take(PILLAR_GROUND_FILL_LIMIT) {
+                            editor.set_block_absolute(GRAY_CONCRETE, bx, y, bz, None, Some(&[]));
+                        }
+                        editor.register_support_column(bx, bz, GRAY_CONCRETE);
+                        continue;
+                    }
+                    let bottom = deck_y + dy;
                     if bottom > ground {
                         for y in (ground..bottom).rev().take(PILLAR_GROUND_FILL_LIMIT) {
                             editor.set_block_with_properties_absolute(

@@ -120,10 +120,15 @@ pub struct Args {
     #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
     pub wide_roads: bool,
 
-    /// Height in blocks of one elevated road/bridge level and of the clearance
-    /// under it (arnis-jp; upstream is 6)
-    #[arg(long, default_value_t = 8, value_parser = clap::value_parser!(i32).range(4..=16))]
-    pub elevated_height: i32,
+    /// Raise elevated roads/bridges: one level and the clearance under it is
+    /// round(6 × --scale × --elevated-ratio) blocks, 10 at scale 1.4 (arnis-jp;
+    /// off is upstream's 6). Bundled-deck piers become grey concrete columns.
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    pub tall_elevated: bool,
+
+    /// Multiplier in the elevated road height 6 × scale × ratio (arnis-jp)
+    #[arg(long, default_value_t = 1.2, value_parser = parse_elevated_ratio)]
+    pub elevated_ratio: f64,
 
     /// Give bicycle parkings only a floor: no roof, posts or walls (arnis-jp)
     #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
@@ -531,6 +536,17 @@ fn parse_height_multiplier(arg: &str) -> Result<f64, String> {
         .map_err(|_| format!("`{arg}` is not a number"))?;
     validate_height_multiplier(multiplier)?;
     Ok(multiplier)
+}
+
+/// arnis-jp: --elevated-ratio, the multiplier in 6 × scale × ratio
+fn parse_elevated_ratio(arg: &str) -> Result<f64, String> {
+    let ratio: f64 = arg
+        .parse()
+        .map_err(|_| format!("`{arg}` is not a number"))?;
+    if !(0.5..=3.0).contains(&ratio) {
+        return Err(format!("elevated ratio must be between 0.5 and 3.0, got {ratio}"));
+    }
+    Ok(ratio)
 }
 
 fn parse_scale(arg: &str) -> Result<f64, String> {

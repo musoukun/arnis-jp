@@ -16,7 +16,7 @@ const ITEMS = [
   { label: 'summary_plateau', section: 'japan', id: 'plateau-toggle', kind: 'checkbox' },
   { label: 'summary_interior', section: 'generation', id: 'interior-toggle', kind: 'checkbox' },
   { label: 'summary_perceived', section: 'perceived', id: 'perceived-size-toggle', kind: 'checkbox' },
-  { label: 'summary_elevated_height', section: 'perceived', id: 'elevated-height-slider', kind: 'number', unit: '' },
+  { label: 'summary_elevated_height', section: 'perceived', id: 'tall-elevated-toggle', kind: 'checkbox' },
   { label: 'summary_generation_mode', section: 'generation', id: 'generation-mode-cards', kind: 'segmented', wide: true },
   { label: 'summary_gamemode', section: 'world', id: 'gamemode-group', kind: 'segmented', wide: true },
 ];
