@@ -107,11 +107,18 @@ pub fn generate_amenities(
                 }
             }
             "bicycle_parking" => {
-                // Honor an explicit surface=* tag; default to a wooden deck.
+                // covered=no is an open-air rack area: no posts, no roof.
+                let covered = element.tags().get("covered").map(String::as_str) != Some("no");
+
+                // Honor an explicit surface=* tag; default to a wooden deck under
+                // a roof and to plain paving in the open.
+                let default_surface = if covered { None } else { Some("paved") };
                 let ground_block: Block = element
                     .tags()
                     .get("surface")
-                    .and_then(|s| get_blocks_for_surface(s))
+                    .map(String::as_str)
+                    .or(default_surface)
+                    .and_then(get_blocks_for_surface)
                     .map(|blocks| blocks[0])
                     .unwrap_or(OAK_PLANKS);
                 let roof_block: Block = STONE_BLOCK_SLAB;
@@ -127,6 +134,10 @@ pub fn generate_amenities(
                 // Fill the floor area
                 for (x, z) in floor_area.iter() {
                     editor.set_block(ground_block, *x, 0, *z, None, None);
+                }
+
+                if !covered {
+                    return;
                 }
 
                 // Place fences and roof slabs at each corner node
