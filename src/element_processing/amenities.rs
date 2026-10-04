@@ -120,7 +120,8 @@ pub fn generate_amenities(
                     return;
                 }
 
-                let ground_block = bicycle_parking_floor(editor, element.tags(), &floor_area, covered);
+                let ground_block =
+                    bicycle_parking_floor(editor, element.tags(), &floor_area, covered);
                 let roof_block: Block = STONE_BLOCK_SLAB;
 
                 if !covered {

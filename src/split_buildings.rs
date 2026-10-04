@@ -163,12 +163,20 @@ mod tests {
         let nodes = [(x0, z0), (x1, z0), (x1, z1), (x0, z1), (x0, z0)]
             .iter()
             .enumerate()
-            .map(|(i, &(x, z))| ProcessedNode { id: id * 10 + i as u64, tags: HashMap::new(), x, z })
+            .map(|(i, &(x, z))| ProcessedNode {
+                id: id * 10 + i as u64,
+                tags: HashMap::new(),
+                x,
+                z,
+            })
             .collect();
         ProcessedElement::Way(ProcessedWay {
             id,
             nodes,
-            tags: tags.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
+            tags: tags
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect(),
         })
     }
 
@@ -202,11 +210,22 @@ mod tests {
     fn a_known_height_lifts_the_other_pieces() {
         let mut els = vec![
             way(1, (0, 0, 100, 200), &[("building", "retail")]),
-            way(GSI + 1, (0, 0, 100, 160), &[("building", "yes"), ("height", "18")]),
-            way(GSI + 2, (0, 160, 100, 200), &[("building", "yes"), ("building:levels", "2")]),
+            way(
+                GSI + 1,
+                (0, 0, 100, 160),
+                &[("building", "yes"), ("height", "18")],
+            ),
+            way(
+                GSI + 2,
+                (0, 160, 100, 200),
+                &[("building", "yes"), ("building:levels", "2")],
+            ),
         ];
         level_split_buildings(&mut els, &mut PartGroups::new());
-        assert_eq!(tags_of(&els[2]).get("height").map(String::as_str), Some("18"));
+        assert_eq!(
+            tags_of(&els[2]).get("height").map(String::as_str),
+            Some("18")
+        );
         assert!(!tags_of(&els[2]).contains_key("building:levels"));
     }
 

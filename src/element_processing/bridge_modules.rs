@@ -62,11 +62,24 @@ fn build_module(bytes: &'static [u8], street_y: i32, has_pillars: bool) -> Optio
     let length = schem.width.max(1) as usize;
     let center_w = schem.length / 2;
 
+    // arnis-jp: the street row's baked lane paint is drawn for one fixed road (up to 8 lanes),
+    // not the carriageways on top; it becomes plain street, and deck_markings repaints it.
+    let street_cols = schem
+        .voxels
+        .iter()
+        .filter(|(_, y, _, b)| *y == street_y && b.block == MODULE_STREET_BLOCK)
+        .map(|(_, _, z, _)| *z);
+    let paint_span =
+        street_cols.clone().min().unwrap_or(0) - 1..=street_cols.max().unwrap_or(-1) + 1;
+
     let mut slices = vec![Vec::new(); length];
-    for (x, y, z, block) in schem.voxels {
+    for (x, y, z, mut block) in schem.voxels {
         // Under-deck stud buttons double up where ramp steps overlap; drop them.
         if block.block == STONE_BUTTON && y < street_y {
             continue;
+        }
+        if y == street_y && block.block == WHITE_CONCRETE && paint_span.contains(&z) {
+            block = BlockWithProperties::new(MODULE_STREET_BLOCK, None);
         }
         if let Some(slice) = slices.get_mut(x as usize) {
             slice.push((z - center_w, y - street_y, block));
@@ -318,19 +331,26 @@ pub fn sweep_module(
             let Some(col) = clip_column(*w, limit, edge) else {
                 continue;
             };
+            // arnis-jp: street keeps the lane paint of a deck swept beside it (deck_markings).
+            let street = *dy == 0 && (kerb || is_street_block(block.block));
+            let keep: &[Block] = if street { &[WHITE_CONCRETE] } else { &[] };
             for (bx, bz) in cells(col) {
                 if kerb {
-                    editor.set_block_absolute(MODULE_STREET_BLOCK, bx, deck_y, bz, None, None);
+                    editor.set_block_absolute(
+                        MODULE_STREET_BLOCK,
+                        bx,
+                        deck_y,
+                        bz,
+                        None,
+                        Some(keep),
+                    );
                     continue;
                 }
                 if *dy <= -PILLAR_FOOT_MIN_DEPTH && surface.support_blocked(bx, bz, deck_y) {
                     continue;
                 }
                 // arnis-jp: the schematic's pier shaft gives way to a concrete column below.
-                if concrete
-                    && *dy <= -PILLAR_FOOT_MIN_DEPTH
-                    && is_pillar_material(block.block)
-                {
+                if concrete && *dy <= -PILLAR_FOOT_MIN_DEPTH && is_pillar_material(block.block) {
                     continue;
                 }
                 editor.set_block_with_properties_absolute(
@@ -339,7 +359,7 @@ pub fn sweep_module(
                     deck_y + dy,
                     bz,
                     None,
-                    Some(&[]),
+                    Some(keep),
                 );
             }
         }
@@ -415,5 +435,21 @@ mod tests {
         assert!(mods[0].has_pillars && mods[1].has_pillars);
         assert!(!mods[2].has_pillars && !mods[3].has_pillars);
         assert!(!mods[0].feet.iter().all(|f| f.is_empty()));
+    }
+
+    /// arnis-jp: no lane paint is left on any deck's street row.
+    #[test]
+    fn module_street_rows_carry_no_lane_paint() {
+        for m in modules() {
+            let painted = m
+                .slices
+                .iter()
+                .flatten()
+                .filter(|(w, dy, b)| {
+                    *dy == 0 && b.block == WHITE_CONCRETE && w.abs() < m.half_width - 2
+                })
+                .count();
+            assert_eq!(painted, 0);
+        }
     }
 }

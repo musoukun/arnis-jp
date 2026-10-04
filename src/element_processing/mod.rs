@@ -10,6 +10,7 @@ pub mod building_facade;
 pub mod building_test_support;
 pub mod buildings;
 pub(crate) mod connected_blocks;
+pub mod deck_markings;
 pub mod doors;
 pub mod emergency;
 pub mod highways;

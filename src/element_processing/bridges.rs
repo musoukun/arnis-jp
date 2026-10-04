@@ -81,6 +81,8 @@ pub struct BridgeMemberInfo {
     pub cable_pylons: Option<Vec<(i32, i32)>>,
     // Module decks of an outlined structure stop at its outline; None leaves them full width.
     pub deck_clip: Option<Arc<DeckClip>>,
+    // arnis-jp: parallel carriageways this member's module deck covers; it paints their lanes.
+    pub carried_ways: Vec<ProcessedWay>,
 }
 
 impl BridgeMemberInfo {
@@ -445,6 +447,8 @@ impl BridgeStructureMap {
             let mut covered_ids: HashSet<u64> = HashSet::new();
             // Survivors that absorbed an equal-width sibling sweep one size wider.
             let mut widened_ids: HashSet<u64> = HashSet::new();
+            // arnis-jp: survivor id -> the carriageways its deck covers.
+            let mut carried: HashMap<u64, Vec<ProcessedWay>> = HashMap::new();
             if structure_has_module && group_indices.len() > 1 {
                 // Widest-first pass so covered members never cover others.
                 let mut order: Vec<usize> = group_indices.clone();
@@ -458,17 +462,21 @@ impl BridgeStructureMap {
                         .then(bridge_ways[a].id.cmp(&bridge_ways[b].id))
                 });
                 for &idx in &order {
-                    let mut is_covered = false;
+                    let mut carrier: Option<usize> = None;
                     for &j in &order {
                         if covers(j, idx, &covered_ids) {
-                            is_covered = true;
+                            carrier.get_or_insert(j);
                             if member_range(j) == member_range(idx) {
                                 widened_ids.insert(bridge_ways[j].id);
                             }
                         }
                     }
-                    if is_covered {
+                    if let Some(j) = carrier {
                         covered_ids.insert(bridge_ways[idx].id);
+                        carried
+                            .entry(bridge_ways[j].id)
+                            .or_default()
+                            .push(bridge_ways[idx].clone());
                     }
                 }
             }
@@ -929,6 +937,7 @@ impl BridgeStructureMap {
                         covered_by_wider,
                         cable_pylons: cable_carriers.contains(&idx).then(|| pylon_points.clone()),
                         deck_clip: deck_clip.clone().filter(|_| module_idx.is_some()),
+                        carried_ways: carried.remove(&way.id).unwrap_or_default(),
                     },
                 );
             }
@@ -2014,7 +2023,10 @@ mod tests {
         let profile = ys(&structures, 1);
         assert_eq!(profile[0], 0, "meets the ground at its ends");
         assert_eq!(*profile.last().unwrap(), 0);
-        assert!(profile[12] >= road_headroom(), "clears the road: {profile:?}");
+        assert!(
+            profile[12] >= road_headroom(),
+            "clears the road: {profile:?}"
+        );
         assert!(surface.support_blocked(22, 40, profile[12]));
         assert!(!surface.support_blocked(15, 40, profile[5]));
     }

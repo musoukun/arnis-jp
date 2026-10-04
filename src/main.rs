@@ -52,7 +52,6 @@ mod osm_parser;
 mod osm_tiles;
 mod overture;
 mod perceived_size;
-mod split_buildings;
 #[cfg(feature = "gui")]
 mod preview_3d;
 #[cfg(feature = "gui")]
@@ -60,6 +59,7 @@ mod progress;
 mod projection;
 mod retrieve_data;
 mod satellite_colors;
+mod split_buildings;
 mod structures;
 #[cfg(feature = "gui")]
 mod telemetry;

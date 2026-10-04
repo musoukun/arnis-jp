@@ -1541,17 +1541,7 @@ fn generate_highways_internal(
                 place_way_lamps(editor, way, block_range, road_mask);
             }
 
-            // Lane-marking count; lane_markings=no drops the dividers, not the width.
-            const MAX_LANES: i32 = 16;
-            let mut lanes = way
-                .tags
-                .get("lanes")
-                .and_then(|l| l.parse::<i32>().ok())
-                .unwrap_or_else(|| highway_default_lanes(highway_type))
-                .clamp(1, MAX_LANES);
-            if way.tags.get("lane_markings").map(|s| s.as_str()) == Some("no") {
-                lanes = 1;
-            }
+            let lanes = lane_marking_count(highway_type, &way.tags);
 
             // Elevation based on layer (already normalised; the layer height step
             // is defined at the top of this function).
@@ -1705,7 +1695,8 @@ fn generate_highways_internal(
                     // vector math is identical across the whole segment.
                     // `None` means there are no inner dividers to draw (either
                     // a single-lane road or a degenerate zero-length segment).
-                    let lane_divider_geom = if lanes >= 2 {
+                    // arnis-jp: a module deck is painted after its sweep (deck_markings).
+                    let lane_divider_geom = if lanes >= 2 && !bridge_structure_moduled {
                         let dx_seg = (x2 - x1) as f32;
                         let dz_seg = (z2 - z1) as f32;
                         let seg_len = (dx_seg * dx_seg + dz_seg * dz_seg).sqrt();
@@ -2207,8 +2198,8 @@ fn generate_highways_internal(
                                         } else {
                                             stripe_z - *z
                                         };
-                                        let idx = (axial + block_hi).clamp(0, 2 * block_hi)
-                                            as usize;
+                                        let idx =
+                                            (axial + block_hi).clamp(0, 2 * block_hi) as usize;
                                         row_medians[idx] + offset
                                     } else {
                                         offset
@@ -2268,6 +2259,16 @@ fn generate_highways_internal(
                         module,
                         bridge_member.and_then(|m| m.deck_clip.as_deref()),
                     );
+                    // arnis-jp: lanes of this carriageway and of those its deck covers.
+                    let carried = bridge_member.map(|m| m.carried_ways.as_slice());
+                    for w in std::iter::once(way).chain(carried.unwrap_or_default()) {
+                        crate::element_processing::deck_markings::paint_carriageway(
+                            editor,
+                            bridge_surface,
+                            w,
+                            scale_factor,
+                        );
+                    }
                 } else if !bridge_structure_moduled
                     && (bridge_pylons.is_some()
                         || !matches!(
@@ -2864,6 +2865,18 @@ pub(crate) fn highway_default_lanes(highway_type: &str) -> i32 {
     }
 }
 
+/// Lane-marking count; lane_markings=no drops the dividers, not the width.
+pub(crate) fn lane_marking_count(highway_type: &str, tags: &HashMap<String, String>) -> i32 {
+    const MAX_LANES: i32 = 16;
+    if tags.get("lane_markings").map(|s| s.as_str()) == Some("no") {
+        return 1;
+    }
+    tags.get("lanes")
+        .and_then(|l| l.parse::<i32>().ok())
+        .unwrap_or_else(|| highway_default_lanes(highway_type))
+        .clamp(1, MAX_LANES)
+}
+
 /// Canonical road half-width in blocks. Single source of truth shared by the
 /// renderer and the prescan/bitmap/bridge consumers, so they never disagree.
 /// arnis-jp: an even-width road reaches one block further on its +x/+z side;
@@ -3195,19 +3208,31 @@ mod tests {
                 .collect()
         };
         // 2 lanes at 1.4: 11.8 -> 12 blocks (-5..=6), whatever the road class
-        assert_eq!(highway_block_extent("primary", &tags(&[("lanes", "2")]), 1.4), (5, 6));
+        assert_eq!(
+            highway_block_extent("primary", &tags(&[("lanes", "2")]), 1.4),
+            (5, 6)
+        );
         assert_eq!(highway_block_extent("tertiary", &tags(&[]), 1.4), (5, 6));
         // 1 lane at 1.4: 5.9 -> 6
         assert_eq!(highway_block_extent("residential", &tags(&[]), 1.4), (2, 3));
         // 4 lanes at 1.4: 23.7 -> 24
-        assert_eq!(highway_block_extent("primary", &tags(&[("lanes", "4")]), 1.4), (11, 12));
+        assert_eq!(
+            highway_block_extent("primary", &tags(&[("lanes", "4")]), 1.4),
+            (11, 12)
+        );
         // At 1.3 the extra factor is 1.2: 2 lanes 10.1 -> 10, 1 lane 5.1 -> 5
-        assert_eq!(highway_block_extent("primary", &tags(&[("lanes", "2")]), 1.3), (4, 5));
+        assert_eq!(
+            highway_block_extent("primary", &tags(&[("lanes", "2")]), 1.3),
+            (4, 5)
+        );
         assert_eq!(highway_block_extent("residential", &tags(&[]), 1.3), (2, 2));
         // Paths keep the plain (scale − 0.1) widening
         assert_eq!(highway_block_extent("footway", &tags(&[]), 1.4), (1, 1));
         // Scale 1 is untouched (upstream widths)
-        assert_eq!(highway_block_extent("primary", &tags(&[("lanes", "4")]), 1.0), (7, 7));
+        assert_eq!(
+            highway_block_extent("primary", &tags(&[("lanes", "4")]), 1.0),
+            (7, 7)
+        );
     }
 
     #[test]

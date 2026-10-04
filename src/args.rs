@@ -544,7 +544,9 @@ fn parse_elevated_ratio(arg: &str) -> Result<f64, String> {
         .parse()
         .map_err(|_| format!("`{arg}` is not a number"))?;
     if !(0.5..=3.0).contains(&ratio) {
-        return Err(format!("elevated ratio must be between 0.5 and 3.0, got {ratio}"));
+        return Err(format!(
+            "elevated ratio must be between 0.5 and 3.0, got {ratio}"
+        ));
     }
     Ok(ratio)
 }

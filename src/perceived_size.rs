@@ -105,6 +105,9 @@ mod tests {
         assert_eq!(elevated_height_for(true, 1.4, 1.2), 10);
         assert_eq!(elevated_height_for(true, 1.3, 1.2), 9);
         assert_eq!(elevated_height_for(true, 1.0, 1.2), 7);
-        assert_eq!(elevated_height_for(false, 1.4, 1.2), UPSTREAM_ELEVATED_HEIGHT);
+        assert_eq!(
+            elevated_height_for(false, 1.4, 1.2),
+            UPSTREAM_ELEVATED_HEIGHT
+        );
     }
 }
