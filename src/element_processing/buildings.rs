@@ -2565,6 +2565,13 @@ fn infer_building_height(
 ) -> InferredHeight {
     let mut rng = element_rng(group_seed ^ 0x48E1_6F00_1EA5_0001);
 
+    // arnis-jp: pieces of one split building infer from the largest piece's area
+    // (split_buildings.rs), so they come out the same height.
+    let footprint_area = tags
+        .get(crate::split_buildings::GROUP_AREA_TAG)
+        .and_then(|a| a.parse::<usize>().ok())
+        .unwrap_or(footprint_area);
+
     // Thresholds are m2. Parts are pinned to the middle band so siblings of
     // one group draw from the same table regardless of their own footprint.
     let area_m2 = if tags.contains_key("building:part") {

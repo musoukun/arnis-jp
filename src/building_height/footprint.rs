@@ -182,7 +182,7 @@ fn outline_points(ring: &[(i32, i32)]) -> Vec<(f64, f64)> {
 }
 
 /// Share of `inner` (by area, estimated on a grid) that lies inside `outer`.
-fn share_inside(inner: &[(i32, i32)], outer: &[(i32, i32)]) -> f64 {
+pub(crate) fn share_inside(inner: &[(i32, i32)], outer: &[(i32, i32)]) -> f64 {
     let Some(b) = ring_bounds(inner) else {
         return 0.0;
     };
@@ -386,7 +386,7 @@ pub fn assign_heights(
 }
 
 /// Polygon area (shoelace), in blocks squared.
-fn ring_area(ring: &[(i32, i32)]) -> f64 {
+pub(crate) fn ring_area(ring: &[(i32, i32)]) -> f64 {
     let n = ring.len();
     if n < 3 {
         return 0.0;

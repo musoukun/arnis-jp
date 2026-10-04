@@ -563,7 +563,7 @@ pub fn generate_world_with_options(
     args: &Args,
     options: GenerationOptions,
     outline_suppression: OutlineSuppression,
-    part_groups: PartGroups,
+    mut part_groups: PartGroups,
 ) -> Result<PathBuf, String> {
     let output_path = options.path.clone();
     let world_format = options.format;
@@ -580,6 +580,10 @@ pub fn generate_world_with_options(
     if dropped > 0 {
         println!("  Skipped {dropped} building(s) on runways, taxiways and aprons");
     }
+
+    // arnis-jp: pieces of one building split into several GSI polygons get one height
+    // (even without PLATEAU), so a mall's odd-shaped end is not left low.
+    crate::split_buildings::level_split_buildings(&mut elements, &mut part_groups);
 
     // arnis-jp: match external (PLATEAU / GSI-3D) heights to every footprint up front.
     if let Some(jp) = &jp {

@@ -52,6 +52,7 @@ mod osm_parser;
 mod osm_tiles;
 mod overture;
 mod perceived_size;
+mod split_buildings;
 #[cfg(feature = "gui")]
 mod preview_3d;
 #[cfg(feature = "gui")]
