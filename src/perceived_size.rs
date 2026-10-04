@@ -3,7 +3,8 @@
 //! Minecraft のプレイヤーから見て実物らしい大きさに感じるよう、arnis-jp が
 //! upstream から変えている寸法。項目ごとにオン/オフ（高架は高さ）を選べる。
 //!
-//! - 道路の幅: ワールド倍率が 1 より大きいとき「倍率 − 0.1」倍（1.4 なら 1.3 倍）
+//! - 道路の幅: 1 車線 3.25m × 倍率 × (倍率 − 0.1)（1.4 で 6 マス、偶数幅は片側に1マス足す）。
+//!   歩道・小道は「倍率 − 0.1」倍
 //! - 高架の高さ: 1 層ぶんの段差・桁下・重なる橋の間（upstream は 6 ブロック）
 //! - 自転車置き場: 屋根・柱・壁を作らず床だけ
 //! - 分割建物: 1 つの建物が複数ポリゴンに分かれているとき、低い側（イオンモールの
@@ -38,13 +39,28 @@ pub fn elevated_headroom() -> i32 {
     ELEVATED_HEIGHT.load(Ordering::Relaxed)
 }
 
-/// 道路の半幅に掛ける倍率。ワールド倍率が 1 以下なら upstream どおり（ここでは 1.0）。
+/// 1 車線の実際の幅（日本の一般道の標準的な車線）
+const LANE_REAL_M: f64 = 3.25;
+
+/// 道路の幅に重ねて掛ける倍率「倍率 − 0.1」（建物の幅・奥行きと同じ考え方）。
+/// 「道路の幅を広げる」がオフ、またはワールド倍率が 1 以下なら None（upstream どおり）。
+fn road_ratio(scale: f64) -> Option<f64> {
+    (WIDE_ROADS.load(Ordering::Relaxed) && scale > 1.0).then(|| (scale - 0.1).max(1.0))
+}
+
+/// 道路の半幅に掛ける倍率（車線で幅を決めない道: 歩道・小道など、と車線道路の下限）。
 pub fn road_width_factor(scale: f64) -> f64 {
-    if WIDE_ROADS.load(Ordering::Relaxed) && scale > 1.0 {
-        (scale - 0.1).max(1.0)
-    } else {
-        1.0
-    }
+    road_ratio(scale).unwrap_or(1.0)
+}
+
+/// 車線で幅を決める道の全幅（ブロック、四捨五入。偶数もありうる）。
+/// 全幅 = 実際の幅 × ワールド倍率 × (倍率 − 0.1)。実際の幅は width=* タグ、無ければ 3.25m × 車線数
+/// （ユーザー 2026-10-05「倍率 1.4 で片側1車線は 6 マスが体感に近い」: 3.25 × 1.4 × 1.3 = 5.9）。
+/// 「道路の幅を広げる」がオフ、またはワールド倍率が 1 以下なら None（upstream の 3.5m/車線のまま）。
+pub fn wide_road_width(scale: f64, lanes: i32, width_m: Option<f64>) -> Option<i32> {
+    let ratio = road_ratio(scale)?;
+    let real_m = width_m.unwrap_or(lanes as f64 * LANE_REAL_M);
+    Some((real_m * scale * ratio).round() as i32)
 }
 
 /// 屋根・柱・壁を省いて床だけにする自転車置き場か

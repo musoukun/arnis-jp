@@ -42,7 +42,7 @@
   "perceived_size": "Perceived Real Size",
   "perceived_size_desc": "Turns on every item below and sets World Scale to 1.4.",
   "wide_roads": "Wider Roads",
-  "wide_roads_desc": "Above scale 1, roads widen by the scale minus 0.1.",
+  "wide_roads_desc": "Each lane is 3.25 m × scale × (scale − 0.1): 6 blocks at scale 1.4.",
   "bare_bicycle_parking": "Bare Bicycle Parking",
   "bare_bicycle_parking_desc": "Only a floor: no roof, posts or walls.",
   "fill_split_buildings": "Fill Split Buildings",

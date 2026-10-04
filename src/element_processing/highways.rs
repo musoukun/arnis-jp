@@ -26,6 +26,11 @@ use std::collections::{HashMap, HashSet};
 /// below catches it if a caller ever exceeds it.
 const MAX_BLOCK_RANGE: usize = 8;
 
+/// arnis-jp: half-width the stack buffers hold. A road is clamped to
+/// MAX_BLOCK_RANGE before --scale widens it, so its rendered half-width can
+/// pass 8 (4 lanes at scale 1.4 under 「道路の幅を広げる」 reach 12).
+const MEDIAN_BUF_RANGE: usize = 32;
+
 /// Centerline cells between pillars under a raised non-bridge road.
 const OVERPASS_PILLAR_INTERVAL: usize = 8;
 
@@ -43,11 +48,11 @@ fn perpendicular_median_raw(
     block_range: i32,
     dir_horizontal: bool,
 ) -> i32 {
-    debug_assert!(block_range as usize <= MAX_BLOCK_RANGE);
+    debug_assert!(block_range as usize <= MEDIAN_BUF_RANGE);
     let len = 2 * block_range as usize + 1;
     // Stack buffer keeps this allocation-free on a hot path that runs
     // millions of times for a city-scale bbox.
-    let mut ys = [0i32; 2 * MAX_BLOCK_RANGE + 1];
+    let mut ys = [0i32; 2 * MEDIAN_BUF_RANGE + 1];
     if dir_horizontal {
         for (i, t) in (-block_range..=block_range).enumerate() {
             ys[i] = editor.get_ground_level(set_x, centerline_z + t);
@@ -82,7 +87,7 @@ fn precompute_row_medians(
     dir_horizontal: bool,
     out: &mut [i32],
 ) {
-    debug_assert!(block_range as usize <= MAX_BLOCK_RANGE);
+    debug_assert!(block_range as usize <= MEDIAN_BUF_RANGE);
     let len = 2 * block_range as usize + 1;
     debug_assert!(out.len() >= len);
     for (i, slot) in out[..len].iter_mut().enumerate() {
@@ -1520,8 +1525,10 @@ fn generate_highways_internal(
                 }
             }
 
-            // Canonical width (shared with prescan/bridge consumers).
-            let block_range = highway_block_range(highway_type, &way.tags, scale_factor);
+            // Canonical width (shared with prescan/bridge consumers). arnis-jp: an even-width
+            // road reaches one more block (block_hi) toward +x/+z.
+            let (block_range, block_hi) =
+                highway_block_extent(highway_type, &way.tags, scale_factor);
 
             // At-grade lit ways get periodic street lamps alongside.
             if way.tags.get("lit").map(String::as_str) == Some("yes")
@@ -1801,13 +1808,13 @@ fn generate_highways_internal(
                         // full 3-tap median (which itself touches ~15
                         // ground samples) for every `(dx, dz)` cell, making
                         // wide-road rendering O(width²) per centerline.
-                        let mut row_medians = [0i32; 2 * MAX_BLOCK_RANGE + 1];
+                        let mut row_medians = [0i32; 2 * MEDIAN_BUF_RANGE + 1];
                         if flatten_width {
                             precompute_row_medians(
                                 editor,
                                 *x,
                                 *z,
-                                block_range,
+                                block_hi,
                                 dir_horizontal,
                                 &mut row_medians,
                             );
@@ -1839,8 +1846,8 @@ fn generate_highways_internal(
                                 };
                                 if fill_lo <= fill_hi {
                                     for fill_y in fill_lo..=fill_hi {
-                                        for fdx in -block_range..=block_range {
-                                            for fdz in -block_range..=block_range {
+                                        for fdx in -block_range..=block_hi {
+                                            for fdz in -block_range..=block_hi {
                                                 editor.set_block_absolute(
                                                     STONE_BRICKS,
                                                     *x + fdx,
@@ -1858,8 +1865,8 @@ fn generate_highways_internal(
                         }
 
                         // Draw the road surface for the entire width
-                        for dx in -block_range..=block_range {
-                            for dz in -block_range..=block_range {
+                        for dx in -block_range..=block_hi {
+                            for dz in -block_range..=block_hi {
                                 let set_x: i32 = x + dx;
                                 let set_z: i32 = z + dz;
 
@@ -1876,7 +1883,7 @@ fn generate_highways_internal(
                                     ay
                                 } else if flatten_width {
                                     let axial = if dir_horizontal { dx } else { dz };
-                                    row_medians[(axial + block_range) as usize] + offset
+                                    row_medians[(axial + block_hi) as usize] + offset
                                 } else {
                                     offset
                                 };
@@ -2200,7 +2207,7 @@ fn generate_highways_internal(
                                         } else {
                                             stripe_z - *z
                                         };
-                                        let idx = (axial + block_range).clamp(0, 2 * block_range)
+                                        let idx = (axial + block_hi).clamp(0, 2 * block_hi)
                                             as usize;
                                         row_medians[idx] + offset
                                     } else {
@@ -2859,11 +2866,24 @@ pub(crate) fn highway_default_lanes(highway_type: &str) -> i32 {
 
 /// Canonical road half-width in blocks. Single source of truth shared by the
 /// renderer and the prescan/bitmap/bridge consumers, so they never disagree.
+/// arnis-jp: an even-width road reaches one block further on its +x/+z side;
+/// that block is in `highway_block_extent`, the symmetric half-width is here.
 pub(crate) fn highway_block_range(
     highway_type: &str,
     tags: &HashMap<String, String>,
     scale: f64,
 ) -> i32 {
+    highway_block_extent(highway_type, tags, scale).0
+}
+
+/// arnis-jp: the road's reach from its centre line as (toward -x/-z, toward +x/+z).
+/// Equal except for an even total width under 「道路の幅を広げる」, which takes its
+/// extra block on the +x/+z side (a 2-lane road at scale 1.4 is 12 blocks: -5..=6).
+pub(crate) fn highway_block_extent(
+    highway_type: &str,
+    tags: &HashMap<String, String>,
+    scale: f64,
+) -> (i32, i32) {
     let (mut block_range, scales_with_lanes): (i32, bool) = match highway_type {
         "footway" | "pedestrian" => (1, false),
         // Bicycle paths are 2-4 m across; at the road default they swallowed the verge
@@ -2887,6 +2907,18 @@ pub(crate) fn highway_block_range(
         .unwrap_or_else(|| highway_default_lanes(highway_type))
         .clamp(1, MAX_LANES);
 
+    // arnis-jp: 「道路の幅を広げる」では、車線の道は 3.25m × 倍率 × (倍率 − 0.1) の全幅にする
+    // （倍率 1.4 で 1 車線 6 マス、2 車線 12 マス。ユーザー「片側1車線は 6 マスが体感に近い」）。
+    // 種類ごとの既定の幅は使わず、車線数（無ければ種類ごとの既定の車線数）だけで決める。
+    if scales_with_lanes {
+        if let Some(total) =
+            crate::perceived_size::wide_road_width(scale, lanes, parse_width_tag_m(tags))
+        {
+            let span = (total.max(1) - 1).min(2 * MEDIAN_BUF_RANGE as i32 - 1);
+            return (span / 2, span / 2 + span % 2);
+        }
+    }
+
     // Explicit width=* wins; else vehicular roads use 3.5 m/lane, never below
     // the default. The -1 accounts for the centre block in 2*block_range+1.
     if let Some(w) = parse_width_tag_m(tags) {
@@ -2901,13 +2933,14 @@ pub(crate) fn highway_block_range(
         // max(1): scaling must never collapse a road to zero width.
         block_range = (((block_range as f64) * scale).floor() as i32).max(1);
     } else if scale > 1.0 {
-        // arnis-jp: 建物や敷地は --scale で広がるので、「体感リアルサイズ」では道路の幅も
-        // 縮尺より 0.1 小さい倍率で広げる（1.4 なら 1.3 倍）。オフなら upstream どおり広げない。
+        // arnis-jp: 歩道・小道など車線の無い道は「道路の幅を広げる」で (倍率 − 0.1) 倍
+        // （1.4 なら 1.3 倍）。オフなら upstream どおり広げない。
         block_range =
             ((block_range as f64) * crate::perceived_size::road_width_factor(scale)).round() as i32;
     }
 
-    block_range
+    let block_range = block_range.min(MEDIAN_BUF_RANGE as i32);
+    (block_range, block_range)
 }
 
 /// Collect all (x, z) coordinates that are covered by any rendered road or path
@@ -3016,7 +3049,7 @@ fn collect_highway_surface_coords(
         }
 
         // Use the same block_range the renderer uses for this highway type
-        let block_range = highway_block_range(highway_type, &way.tags, scale);
+        let (block_range, block_hi) = highway_block_extent(highway_type, &way.tags, scale);
 
         for i in 1..way.nodes.len() {
             let prev = way.nodes[i - 1].xz();
@@ -3025,8 +3058,8 @@ fn collect_highway_surface_coords(
             let points = bresenham_line(prev.x, 0, prev.z, cur.x, 0, cur.z);
 
             for (bx, _, bz) in &points {
-                for dx in -block_range..=block_range {
-                    for dz in -block_range..=block_range {
+                for dx in -block_range..=block_hi {
+                    for dz in -block_range..=block_hi {
                         bitmap.set(bx + dx, bz + dz);
                     }
                 }
@@ -3075,7 +3108,7 @@ pub fn collect_building_passage_coords(
             continue;
         };
 
-        let block_range = highway_block_range(highway_type, &way.tags, scale);
+        let (block_range, block_hi) = highway_block_extent(highway_type, &way.tags, scale);
 
         for i in 1..way.nodes.len() {
             let prev = way.nodes[i - 1].xz();
@@ -3084,8 +3117,8 @@ pub fn collect_building_passage_coords(
             let points = bresenham_line(prev.x, 0, prev.z, cur.x, 0, cur.z);
 
             for (bx, _, bz) in &points {
-                for dx in -block_range..=block_range {
-                    for dz in -block_range..=block_range {
+                for dx in -block_range..=block_hi {
+                    for dz in -block_range..=block_hi {
                         bitmap.set(bx + dx, bz + dz);
                     }
                 }
@@ -3149,6 +3182,32 @@ mod tests {
         // Down-scaling never collapses a road to zero width.
         assert_eq!(highway_block_range("footway", &tags(&[]), 0.4), 1);
         assert_eq!(highway_block_range("residential", &tags(&[]), 0.4), 1);
+    }
+
+    /// arnis-jp: 「道路の幅を広げる」(on by default): full width = 3.25 m per lane
+    /// × scale × (scale − 0.1), rounded; an even width takes its extra block on +x/+z.
+    #[test]
+    fn wide_roads_follow_lanes_times_scale() {
+        let tags = |pairs: &[(&str, &str)]| -> HashMap<String, String> {
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .collect()
+        };
+        // 2 lanes at 1.4: 11.8 -> 12 blocks (-5..=6), whatever the road class
+        assert_eq!(highway_block_extent("primary", &tags(&[("lanes", "2")]), 1.4), (5, 6));
+        assert_eq!(highway_block_extent("tertiary", &tags(&[]), 1.4), (5, 6));
+        // 1 lane at 1.4: 5.9 -> 6
+        assert_eq!(highway_block_extent("residential", &tags(&[]), 1.4), (2, 3));
+        // 4 lanes at 1.4: 23.7 -> 24
+        assert_eq!(highway_block_extent("primary", &tags(&[("lanes", "4")]), 1.4), (11, 12));
+        // At 1.3 the extra factor is 1.2: 2 lanes 10.1 -> 10, 1 lane 5.1 -> 5
+        assert_eq!(highway_block_extent("primary", &tags(&[("lanes", "2")]), 1.3), (4, 5));
+        assert_eq!(highway_block_extent("residential", &tags(&[]), 1.3), (2, 2));
+        // Paths keep the plain (scale − 0.1) widening
+        assert_eq!(highway_block_extent("footway", &tags(&[]), 1.4), (1, 1));
+        // Scale 1 is untouched (upstream widths)
+        assert_eq!(highway_block_extent("primary", &tags(&[("lanes", "4")]), 1.0), (7, 7));
     }
 
     #[test]

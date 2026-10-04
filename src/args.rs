@@ -115,7 +115,8 @@ pub struct Args {
     // arnis-jp: 「体感リアルサイズ」の各調整 (perceived_size.rs). Defaults are
     // arnis-jp's own sizes; `--wide-roads false --elevated-height 6
     // --bare-bicycle-parking false --fill-split-buildings false` is upstream.
-    /// Widen roads by (scale - 0.1) when --scale is above 1 (arnis-jp)
+    /// Above --scale 1, size lane roads at 3.25 m per lane × scale × (scale - 0.1)
+    /// (6 blocks a lane at 1.4) and widen paths by (scale - 0.1) (arnis-jp)
     #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
     pub wide_roads: bool,
 
