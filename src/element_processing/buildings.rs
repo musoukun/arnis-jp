@@ -7406,6 +7406,18 @@ pub fn generate_buildings(
     // Calculate building bounds
     let bounds = BuildingBounds::from_nodes(&element.nodes);
 
+    // arnis-jp: 「体感リアルサイズ」では building=* の付いた自転車置き場も、
+    // 屋根・柱・壁のない床だけにする。
+    if crate::perceived_size::bare_bicycle_parking(&element.tags) {
+        crate::element_processing::amenities::bicycle_parking_floor(
+            editor,
+            &element.tags,
+            &cached_floor_area,
+            false,
+        );
+        return None;
+    }
+
     // Handle shelter amenity
     if element.tags.get("amenity").map(String::as_str) == Some("shelter") {
         generate_shelter(editor, element, &cached_floor_area, scale_factor);

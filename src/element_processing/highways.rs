@@ -1272,9 +1272,8 @@ fn generate_highways_internal(
     } else {
         layer_value_raw
     };
-    // arnis-jp: bridges.rs の LAYER_HEIGHT_STEP と揃える（6→8）
-    const LAYER_HEIGHT_STEP: i32 = 8;
-    let layer_boost = layer_value_effective * LAYER_HEIGHT_STEP;
+    // arnis-jp: bridges.rs の高架の段差と揃える（体感リアルサイズで 8、オフで 6）
+    let layer_boost = layer_value_effective * crate::perceived_size::elevated_headroom();
 
     if let Some(highway_type) = element.tags().get("highway") {
         if highway_type == "street_lamp" {
@@ -1547,7 +1546,7 @@ fn generate_highways_internal(
                 lanes = 1;
             }
 
-            // Elevation based on layer (already normalised; `LAYER_HEIGHT_STEP`
+            // Elevation based on layer (already normalised; the layer height step
             // is defined at the top of this function).
             let base_elevation = layer_boost;
 
@@ -2902,9 +2901,10 @@ pub(crate) fn highway_block_range(
         // max(1): scaling must never collapse a road to zero width.
         block_range = (((block_range as f64) * scale).floor() as i32).max(1);
     } else if scale > 1.0 {
-        // arnis-jp: 建物や敷地は --scale で広がるので、道路の幅も広げる。
-        // ただし縮尺より 0.1 小さい倍率にする（1.4 なら 1.3 倍。再現する建物の幅と同じく、見た目でちょうどよい広さ）
-        block_range = ((block_range as f64) * (scale - 0.1).max(1.0)).round() as i32;
+        // arnis-jp: 建物や敷地は --scale で広がるので、「体感リアルサイズ」では道路の幅も
+        // 縮尺より 0.1 小さい倍率で広げる（1.4 なら 1.3 倍）。オフなら upstream どおり広げない。
+        block_range =
+            ((block_range as f64) * crate::perceived_size::road_width_factor(scale)).round() as i32;
     }
 
     block_range

@@ -1,0 +1,80 @@
+// arnis-jp: the "Perceived Real Size" section. Each item is its own setting
+// (stored by settings-store.js, sent with the generation request). The master
+// switch only sets them all at once: on gives arnis-jp's sizes and World Scale
+// 1.4, off gives upstream Arnis's. It shows on while every item matches.
+
+const ITEMS = [
+  { id: 'wide-roads-toggle', on: true, off: false },
+  { id: 'bare-bicycle-parking-toggle', on: true, off: false },
+  { id: 'fill-split-buildings-toggle', on: true, off: false },
+  { id: 'elevated-height-slider', on: 8, off: 6 },
+];
+const SCALE_ON = 1.4;
+
+function read(el) {
+  return el.type === 'checkbox' ? el.checked : parseInt(el.value, 10);
+}
+
+function write(el, value) {
+  if (read(el) === value) return;
+  if (el.type === 'checkbox') el.checked = value;
+  else el.value = value;
+  // Events so the label, the store and the summary follow
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+function syncMaster(master) {
+  master.checked = ITEMS.every((item) => {
+    const el = document.getElementById(item.id);
+    return el && read(el) === item.on;
+  });
+}
+
+function refreshHeightLabel() {
+  const slider = document.getElementById('elevated-height-slider');
+  const label = document.getElementById('elevated-height-value');
+  if (slider && label) label.textContent = slider.value;
+}
+
+export function initPerceivedSize() {
+  const master = document.getElementById('perceived-size-toggle');
+  if (!master) return;
+
+  master.addEventListener('change', () => {
+    const on = master.checked;
+    ITEMS.forEach((item) => {
+      const el = document.getElementById(item.id);
+      if (el) write(el, on ? item.on : item.off);
+    });
+    const scale = document.getElementById('scale-value-slider');
+    if (on && scale && !scale.disabled) write(scale, SCALE_ON);
+  });
+
+  ITEMS.forEach((item) => {
+    const el = document.getElementById(item.id);
+    if (el) el.addEventListener('change', () => syncMaster(master));
+  });
+
+  const slider = document.getElementById('elevated-height-slider');
+  if (slider) slider.addEventListener('input', refreshHeightLabel);
+  refreshHeightLabel();
+}
+
+// After settings-store.js restores the items, the master has to follow them.
+export function syncPerceivedSize() {
+  const master = document.getElementById('perceived-size-toggle');
+  if (master) syncMaster(master);
+  refreshHeightLabel();
+}
+
+// The values sent with gui_start_generation
+export function perceivedSizeArgs() {
+  const get = (id) => document.getElementById(id);
+  return {
+    wideRoads: get('wide-roads-toggle').checked,
+    elevatedHeight: parseInt(get('elevated-height-slider').value, 10) || 8,
+    bareBicycleParking: get('bare-bicycle-parking-toggle').checked,
+    fillSplitBuildings: get('fill-split-buildings-toggle').checked,
+  };
+}

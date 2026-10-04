@@ -331,7 +331,13 @@ pub fn assign_heights(
         .collect();
     let areas: Vec<f64> = footprints.iter().map(|f| ring_area(&f.ring)).collect();
     let mut inherited: Vec<(usize, f64)> = Vec::new();
-    for wi in 0..footprints.len() {
+    // arnis-jp: 「体感リアルサイズ」の分割建物の項目がオフなら行わない。
+    let split_count = if crate::perceived_size::fill_split_buildings() {
+        footprints.len()
+    } else {
+        0
+    };
+    for wi in 0..split_count {
         let own = result[wi].filter(|_| strong[wi]).map(|a| a.height_m);
         if let Some(h) =
             inherit_from_larger_sibling(wi, own, footprints, &bounds, &areas, &strong, &result)

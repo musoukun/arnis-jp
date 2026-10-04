@@ -112,6 +112,27 @@ pub struct Args {
     #[arg(long, default_value_t = false)]
     pub plateau: bool,
 
+    // arnis-jp: 「体感リアルサイズ」の各調整 (perceived_size.rs). Defaults are
+    // arnis-jp's own sizes; `--wide-roads false --elevated-height 6
+    // --bare-bicycle-parking false --fill-split-buildings false` is upstream.
+    /// Widen roads by (scale - 0.1) when --scale is above 1 (arnis-jp)
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    pub wide_roads: bool,
+
+    /// Height in blocks of one elevated road/bridge level and of the clearance
+    /// under it (arnis-jp; upstream is 6)
+    #[arg(long, default_value_t = 8, value_parser = clap::value_parser!(i32).range(4..=16))]
+    pub elevated_height: i32,
+
+    /// Give bicycle parkings only a floor: no roof, posts or walls (arnis-jp)
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    pub bare_bicycle_parking: bool,
+
+    /// Raise the lower pieces of a building split into several polygons to the
+    /// height of its largest piece (arnis-jp)
+    #[arg(long, default_value_t = true, action = clap::ArgAction::Set)]
+    pub fill_split_buildings: bool,
+
     /// Enable interior generation (optional, off unless requested)
     #[arg(long, default_value_t = false, action = ArgAction::Set, num_args = 0..=1, default_missing_value = "true")]
     pub interior: bool,

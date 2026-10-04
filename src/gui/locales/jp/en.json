@@ -33,5 +33,20 @@
   "summary_generation_mode": "Mode",
   "summary_interior": "Interiors",
   "summary_gamemode": "Game mode",
-  "summary_world_time": "Time"
+  "summary_world_time": "Time",
+  "summary_perceived": "Perceived size",
+  "summary_elevated_height": "Elevated height",
+  "settings_section_perceived": "Perceived Real Size",
+  "settings_nav_perceived": "Roads, elevated roads, buildings",
+  "settings_section_perceived_desc": "Sizes that look real to a Minecraft player.",
+  "perceived_size": "Perceived Real Size",
+  "perceived_size_desc": "Turns on every item below and sets World Scale to 1.4.",
+  "wide_roads": "Wider Roads",
+  "wide_roads_desc": "Above scale 1, roads widen by the scale minus 0.1.",
+  "bare_bicycle_parking": "Bare Bicycle Parking",
+  "bare_bicycle_parking_desc": "Only a floor: no roof, posts or walls.",
+  "fill_split_buildings": "Fill Split Buildings",
+  "fill_split_buildings_desc": "Raises the low pieces of a building split into several shapes to its tallest piece.",
+  "elevated_height": "Elevated Road Height",
+  "elevated_height_desc": "Blocks per elevated level and under it. Arnis uses 6."
 }

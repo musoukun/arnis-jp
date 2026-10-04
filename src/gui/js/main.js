@@ -12,6 +12,7 @@ import {
 import { initSettingsLayout, syncSettingsLayout } from './settings-layout.js';
 import { initSettingsSummary, refreshSettingsSummary } from './settings-summary.js';
 import { growWindowForPanel, shrinkWindowAfterPanel, hasRoomForPanel } from './settings-panel.js';
+import { initPerceivedSize, syncPerceivedSize, perceivedSizeArgs } from './perceived-size.js';
 
 let invoke;
 if (window.__TAURI__) {
@@ -54,12 +55,14 @@ window.addEventListener("DOMContentLoaded", async () => {
   initSettingsLayout();
   initDialogs();
   initSettingsSummary();
+  initPerceivedSize();
   initVoxyLightingCoupling();
   initCavesFillCoupling();
   refreshHeightLimitRow();
   // After initSettings(), so the slider label and rotation handlers exist
   // before restored values are applied. Labels get localized a few lines below.
   initSettingsStore({ resetWorldFormat: () => setWorldFormat('java') });
+  syncPerceivedSize();
   // The store's restore fired the toggle's change event before the save path
   // and the world name were known; read the world once more with both in hand.
   refreshOneWorldState();
@@ -1229,10 +1232,10 @@ function initSettings() {
   }
 
   slider.addEventListener("input", refreshScaleDisplay);
-  // Double-click to reset world scale to default (1.00).
+  // Double-click to reset world scale to its default (arnis-jp: the HTML value, 1.4).
   // Assigning .value fires no event, so dispatch them for the label and store.
   slider.addEventListener("dblclick", () => {
-    slider.value = 1;
+    slider.value = slider.defaultValue;
     slider.dispatchEvent(new Event("input", { bubbles: true }));
     slider.dispatchEvent(new Event("change", { bubbles: true }));
   });
@@ -3442,7 +3445,9 @@ async function startGeneration() {
         oneWorldName: oneWorld ? oneWorldFolderName() : "",
         satelliteColors: satellite_colors,
         gsiEnabled: gsi_enabled,
-        plateauEnabled: plateau_enabled
+        plateauEnabled: plateau_enabled,
+        // arnis-jp: perceived real size items
+        ...perceivedSizeArgs()
     });
 
     console.log("Generation process started.");

@@ -108,20 +108,9 @@ pub fn generate_amenities(
             }
             "bicycle_parking" => {
                 // covered=no is an open-air rack area: no posts, no roof.
-                let covered = element.tags().get("covered").map(String::as_str) != Some("no");
-
-                // Honor an explicit surface=* tag; default to a wooden deck under
-                // a roof and to plain paving in the open.
-                let default_surface = if covered { None } else { Some("paved") };
-                let ground_block: Block = element
-                    .tags()
-                    .get("surface")
-                    .map(String::as_str)
-                    .or(default_surface)
-                    .and_then(get_blocks_for_surface)
-                    .map(|blocks| blocks[0])
-                    .unwrap_or(OAK_PLANKS);
-                let roof_block: Block = STONE_BLOCK_SLAB;
+                // arnis-jp: 「体感リアルサイズ」では屋根・柱を付けず床だけにする。
+                let covered = element.tags().get("covered").map(String::as_str) != Some("no")
+                    && !crate::perceived_size::bare_bicycle_parking(element.tags());
 
                 // Use pre-computed flood fill from cache
                 let floor_area =
@@ -131,10 +120,8 @@ pub fn generate_amenities(
                     return;
                 }
 
-                // Fill the floor area
-                for (x, z) in floor_area.iter() {
-                    editor.set_block(ground_block, *x, 0, *z, None, None);
-                }
+                let ground_block = bicycle_parking_floor(editor, element.tags(), &floor_area, covered);
+                let roof_block: Block = STONE_BLOCK_SLAB;
 
                 if !covered {
                     return;
@@ -472,6 +459,29 @@ pub fn generate_amenities(
             _ => {}
         }
     }
+}
+
+/// Lays a bicycle parking's floor and returns its block. An explicit surface=*
+/// tag wins; otherwise a wooden deck under a roof and plain paving in the open.
+/// Also used by buildings.rs for a parking that carries building=*.
+pub(crate) fn bicycle_parking_floor(
+    editor: &mut WorldEditor,
+    tags: &HashMap<String, String>,
+    floor_area: &[(i32, i32)],
+    covered: bool,
+) -> Block {
+    let default_surface = if covered { None } else { Some("paved") };
+    let ground_block: Block = tags
+        .get("surface")
+        .map(String::as_str)
+        .or(default_surface)
+        .and_then(get_blocks_for_surface)
+        .map(|blocks| blocks[0])
+        .unwrap_or(OAK_PLANKS);
+    for (x, z) in floor_area {
+        editor.set_block(ground_block, *x, 0, *z, None, None);
+    }
+    ground_block
 }
 
 /// Stamp a bundled fountain at the element; footprint size picks the variant

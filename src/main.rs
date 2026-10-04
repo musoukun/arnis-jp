@@ -51,6 +51,7 @@ mod ore_generation;
 mod osm_parser;
 mod osm_tiles;
 mod overture;
+mod perceived_size;
 #[cfg(feature = "gui")]
 mod preview_3d;
 #[cfg(feature = "gui")]
@@ -221,6 +222,8 @@ fn run_cli() {
     // Parse input arguments
     let mut args: Args = Args::parse();
     args::apply_body_defaults(&mut args);
+    // arnis-jp: road, elevated deck and bicycle parking sizes read this
+    perceived_size::configure(&args);
     // Caves carve into the filled ground, so they bring it with them.
     if args.caves {
         args.fillground = true;

@@ -11,8 +11,27 @@ use crate::world_editor::WorldEditor;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-// arnis-jp: 6 だと桁下が4mしかなく、日本の高架（建築限界4.5m、路面7〜8m）より低すぎるため 8 に上げる。
-const LAYER_HEIGHT_STEP: i32 = 8;
+// arnis-jp: 高架の段差・桁下・重なる橋の間は「体感リアルサイズ」で 8（日本の高架：建築限界4.5m、路面7〜8m）、
+// オフなら upstream の 6。
+fn layer_height_step() -> i32 {
+    crate::perceived_size::elevated_headroom()
+}
+
+/// Deck Y above the ground where a road, path or track passes underneath.
+fn road_headroom() -> i32 {
+    crate::perceived_size::elevated_headroom()
+}
+
+/// Deck Y above a lower bridge deck this one crosses.
+fn stacked_deck_headroom() -> i32 {
+    crate::perceived_size::elevated_headroom()
+}
+
+/// A deck at least this far below another in the same column is a separate, lower level.
+fn lower_deck_gap() -> i32 {
+    stacked_deck_headroom() - 1
+}
+
 const FLAT_TERRAIN_DIP_THRESHOLD: i32 = 4;
 const SHORT_BRIDGE_LENGTH_BLOCKS: usize = 30;
 const BRIDGE_NAME_FUSE_DISTANCE_BLOCKS: i32 = 200;
@@ -20,16 +39,12 @@ const DUAL_CARRIAGEWAY_MAX_DISTANCE_BLOCKS: f32 = 12.0;
 const DUAL_CARRIAGEWAY_HEADING_TOLERANCE_DEG: f32 = 20.0;
 /// Parallel decks whose edges come this close read as one structure, whatever their layers.
 const SIDE_DECK_EDGE_GAP_BLOCKS: f32 = 2.0;
-/// Deck Y above the ground where a road, path or track passes underneath.
-const ROAD_HEADROOM: i32 = 8; // arnis-jp: 6→8（桁下 6 ブロック）
 const PATH_HEADROOM: i32 = 5;
 // Clears the catenary wire, 6 above the track bed.
 const RAIL_HEADROOM: i32 = 8;
 /// Deck Y above a river's, canal's or stream's centerline.
 const RIVER_HEADROOM: i32 = 4;
 const STREAM_HEADROOM: i32 = 2;
-/// Deck Y above a lower bridge deck this one crosses.
-const STACKED_DECK_HEADROOM: i32 = 8; // arnis-jp: 6→8（下の橋との間も道路の建築限界を確保）
 /// Room an arch needs over flat ground for its curve to read.
 const ARCH_MIN_CLEARANCE: i32 = 8;
 /// Steepest climb (blocks per cell) a clearance may force from a deck end.
@@ -38,8 +53,6 @@ const MAX_CLEARANCE_SLOPE: f32 = 1.0;
 const PROFILE_MONOTONIC_TOLERANCE: f32 = 2.0;
 /// Bucket side of the spatial index over at-grade ways.
 const OBSTACLE_GRID_CELL: i32 = 64;
-/// A deck at least this far below another in the same column is a separate, lower level.
-const LOWER_DECK_GAP: i32 = STACKED_DECK_HEADROOM - 1;
 /// Rows a deck's own structure reaches below its surface.
 const DECK_STRUCTURE_DEPTH: i32 = 2;
 /// How far off a road deck a rail bridge's track may run and still ride on it.
@@ -637,7 +650,7 @@ impl BridgeStructureMap {
                     }
                     if let Some(&(lower_y, lower_layer)) = resolved_decks.get(&(x, z)) {
                         if lower_layer < layer {
-                            need = need.max(lower_y + STACKED_DECK_HEADROOM);
+                            need = need.max(lower_y + stacked_deck_headroom());
                         }
                     }
                     if need > ground {
@@ -658,7 +671,7 @@ impl BridgeStructureMap {
                 && dip < FLAT_TERRAIN_DIP_THRESHOLD
                 && total_length >= SHORT_BRIDGE_LENGTH_BLOCKS;
             let mut clearance = if flat_span {
-                max_layer * LAYER_HEIGHT_STEP
+                max_layer * layer_height_step()
             } else {
                 0
             };
@@ -1022,7 +1035,7 @@ impl BridgeStructureMap {
                     }
                     if let Some(&(lower_y, lower_layer)) = resolved_decks.get(&(x, z)) {
                         if lower_layer < way_layer {
-                            floor = floor.max(lower_y + STACKED_DECK_HEADROOM);
+                            floor = floor.max(lower_y + stacked_deck_headroom());
                         }
                     }
                 }
@@ -1033,7 +1046,7 @@ impl BridgeStructureMap {
             // Flat spans lift clear, one level more per layer; valley spans sit on their banks.
             let deck = if terrain_max - terrain_min < railways::RAIL_BRIDGE_DIP_THRESHOLD {
                 let mut clearance =
-                    railways::RAIL_BRIDGE_FLAT_CLEARANCE + (layer - 1).max(0) * LAYER_HEIGHT_STEP;
+                    railways::RAIL_BRIDGE_FLAT_CLEARANCE + (layer - 1).max(0) * layer_height_step();
                 if arch {
                     clearance = clearance.max(ARCH_MIN_CLEARANCE);
                 }
@@ -1143,7 +1156,7 @@ impl BridgeSurfaceMap {
 
     /// True when a support from a deck at `deck_y` would land on a road, track or lower deck.
     pub fn support_blocked(&self, x: i32, z: i32, deck_y: i32) -> bool {
-        let lower = |y: i32| y <= deck_y - LOWER_DECK_GAP;
+        let lower = |y: i32| y <= deck_y - lower_deck_gap();
         self.grade_crossings.contains(&(x, z))
             || self.cells.get(&(x, z)).is_some_and(|s| lower(s.low))
             || self.rail_decks.get(&(x, z)).is_some_and(|&y| lower(y))
@@ -1405,13 +1418,13 @@ pub(crate) fn grade_obstacle(way: &ProcessedWay, scale: f64) -> Option<(i32, i32
         let headroom = if is_non_vehicular_bridge_highway(highway) || highway == "track" {
             PATH_HEADROOM
         } else {
-            ROAD_HEADROOM
+            road_headroom()
         };
         return Some((highway_block_range(highway, &way.tags, scale), headroom));
     }
     if railways::is_at_grade_track(way) {
         let headroom = match way.tags.get("railway").map(String::as_str) {
-            Some("tram") => ROAD_HEADROOM,
+            Some("tram") => road_headroom(),
             Some("miniature") => PATH_HEADROOM,
             _ => RAIL_HEADROOM,
         };
@@ -1985,10 +1998,10 @@ mod tests {
             &[(10, 48), (80, 48)],
         );
         let (structures, _) = structures_over(&[road, walk], |_| 0.0);
-        assert_eq!(ys(&structures, 1)[35], 2 * LAYER_HEIGHT_STEP);
+        assert_eq!(ys(&structures, 1)[35], 2 * layer_height_step());
         assert_eq!(
             ys(&structures, 2)[35],
-            2 * LAYER_HEIGHT_STEP,
+            2 * layer_height_step(),
             "sidewalk rides the road deck"
         );
     }
@@ -2001,7 +2014,7 @@ mod tests {
         let profile = ys(&structures, 1);
         assert_eq!(profile[0], 0, "meets the ground at its ends");
         assert_eq!(*profile.last().unwrap(), 0);
-        assert!(profile[12] >= ROAD_HEADROOM, "clears the road: {profile:?}");
+        assert!(profile[12] >= road_headroom(), "clears the road: {profile:?}");
         assert!(surface.support_blocked(22, 40, profile[12]));
         assert!(!surface.support_blocked(15, 40, profile[5]));
     }
@@ -2085,7 +2098,7 @@ mod tests {
         let lower_y = ys(&structures, 1)[12];
         let upper_y = ys(&structures, 2)[20];
         assert!(
-            upper_y >= lower_y + STACKED_DECK_HEADROOM,
+            upper_y >= lower_y + stacked_deck_headroom(),
             "{lower_y} vs {upper_y}"
         );
         assert!(surface.support_blocked(32, 40, upper_y));
@@ -2165,7 +2178,7 @@ mod tests {
         let Some(RailDeck::Level(rail_y)) = structures.rail_deck(1) else {
             panic!("rail viaduct has its own deck");
         };
-        assert!(surface.support_blocked(40, 40, rail_y + STACKED_DECK_HEADROOM));
+        assert!(surface.support_blocked(40, 40, rail_y + stacked_deck_headroom()));
         assert!(!surface.support_blocked(40, 40, *rail_y));
     }
 

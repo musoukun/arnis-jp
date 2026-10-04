@@ -36,5 +36,20 @@
   "summary_generation_mode": "生成モード",
   "summary_interior": "内装",
   "summary_gamemode": "ゲームモード",
-  "summary_world_time": "時刻"
+  "summary_world_time": "時刻",
+  "summary_perceived": "体感サイズ",
+  "summary_elevated_height": "高架の高さ",
+  "settings_section_perceived": "体感リアルサイズ",
+  "settings_nav_perceived": "道路、高架、建物",
+  "settings_section_perceived_desc": "Minecraft のプレイヤーから見て、実物らしく感じる大きさにします。",
+  "perceived_size": "体感リアルサイズ",
+  "perceived_size_desc": "下の項目をまとめてオンにし、ワールド倍率を 1.4 にします。",
+  "wide_roads": "道路の幅を広げる",
+  "wide_roads_desc": "ワールド倍率が 1 より大きいとき、道路を「倍率 − 0.1」倍に広げます。",
+  "bare_bicycle_parking": "自転車置き場を床だけにする",
+  "bare_bicycle_parking_desc": "屋根・柱・壁を付けません。",
+  "fill_split_buildings": "分割建物の高さをそろえる",
+  "fill_split_buildings_desc": "いくつかの形に分かれた建物の低い部分（ショッピングモールの先端など）を、一番大きい部分の高さにそろえます。",
+  "elevated_height": "高架の高さ",
+  "elevated_height_desc": "高架 1 段ぶんと桁下の高さ（ブロック）。元の Arnis は 6 です。"
 }

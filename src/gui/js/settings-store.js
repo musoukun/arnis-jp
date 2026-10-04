@@ -37,6 +37,11 @@ const SETTINGS = [
   { id: 'gsi-toggle', kind: 'checkbox', store: OWN },
   { id: 'satellite-toggle', kind: 'checkbox', store: OWN },
   { id: 'plateau-toggle', kind: 'checkbox', store: OWN },
+  // Perceived real size items; the master switch is derived from them, not stored
+  { id: 'wide-roads-toggle', kind: 'checkbox', store: OWN },
+  { id: 'bare-bicycle-parking-toggle', kind: 'checkbox', store: OWN },
+  { id: 'fill-split-buildings-toggle', kind: 'checkbox', store: OWN },
+  { id: 'elevated-height-slider', kind: 'number', store: OWN },
 
   // World
   { id: 'gamemode-group', kind: 'segmented', store: OWN, valueAttr: 'data-gamemode' },

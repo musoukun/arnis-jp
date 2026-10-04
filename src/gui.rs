@@ -1415,6 +1415,11 @@ fn gui_start_generation(
     satellite_colors: bool,
     gsi_enabled: bool,
     plateau_enabled: bool,
+    // arnis-jp: 「体感リアルサイズ」の各調整
+    wide_roads: bool,
+    elevated_height: i32,
+    bare_bicycle_parking: bool,
+    fill_split_buildings: bool,
 ) -> Result<(), String> {
     use progress::emit_gui_error;
     use LLBBox;
@@ -1719,6 +1724,10 @@ fn gui_start_generation(
                 gsi: gsi_enabled,
                 gsi_3d: None, // GSI 3D requires an external GML file: CLI only (--gsi-3d)
                 plateau: plateau_enabled,
+                wide_roads,
+                elevated_height: elevated_height.clamp(4, 16),
+                bare_bicycle_parking,
+                fill_split_buildings,
                 interior: interior_enabled,
                 fillground: fillground_enabled,
                 caves: caves_enabled,
@@ -1796,6 +1805,8 @@ fn gui_start_generation(
             // Same helper the CLI uses. Anything read before this point (the world prep
             // above) has to apply the body rules on its own.
             crate::args::apply_body_defaults(&mut args);
+            // arnis-jp: road, elevated deck, bicycle parking and split building sizes read this
+            crate::perceived_size::configure(&args);
             // Same as run_cli: caves carve into the filled ground, so they bring it with them.
             if args.caves {
                 args.fillground = true;

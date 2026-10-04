@@ -200,6 +200,14 @@
             </span>
             <span class="settings-nav-dot" aria-hidden="true"></span>
           </button>
+          <button type="button" class="settings-nav-item" data-target="settings-section-perceived">
+            <svg class="icon" aria-hidden="true"><use href="#i-ruler"></use></svg>
+            <span class="settings-nav-text">
+              <span class="settings-nav-title" data-localize="settings_section_perceived">Perceived Real Size</span>
+              <span class="settings-nav-sub" data-localize="settings_nav_perceived">Roads, elevated roads, buildings</span>
+            </span>
+            <span class="settings-nav-dot" aria-hidden="true"></span>
+          </button>
           <button type="button" class="settings-nav-item" data-target="settings-section-world">
             <svg class="icon" aria-hidden="true"><use href="#i-globe"></use></svg>
             <span class="settings-nav-text">
@@ -391,8 +399,8 @@
                     </span>
                   </label>
                   <div class="settings-control">
-                    <input type="range" id="scale-value-slider" name="scale-value-slider" min="0.05" max="2.5" step="0.05" value="1">
-                    <span id="slider-value" class="setting-value">1.00</span>
+                    <input type="range" id="scale-value-slider" name="scale-value-slider" min="0.05" max="2.5" step="0.05" value="1.4">
+                    <span id="slider-value" class="setting-value">1.40</span>
                   </div>
                 </div>
                 <div id="scale-objects-note" class="settings-notice" style="display: none;">
@@ -443,6 +451,86 @@
                   </label>
                   <div class="settings-control">
                     <input type="text" id="bbox-coords" name="bbox-coords" maxlength="55" placeholder="Format: lat,lng,lat,lng" autocomplete="off" spellcheck="false">
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <!-- Perceived real size (arnis-jp, perceived-size.js): sizes that look real
+                 to a Minecraft player. The master switch sets every item below at once. -->
+            <section class="settings-section" id="settings-section-perceived">
+              <header class="settings-section-head">
+                <span class="settings-section-icon" aria-hidden="true"><svg class="icon"><use href="#i-ruler"></use></svg></span>
+                <div>
+                  <h3 data-localize="settings_section_perceived">Perceived Real Size</h3>
+                  <p data-localize="settings_section_perceived_desc">Sizes that look real to a Minecraft player.</p>
+                </div>
+              </header>
+
+              <div class="setting-grid">
+                <div class="settings-row setting-tile is-wide">
+                  <label for="perceived-size-toggle" class="setting-label">
+                    <svg class="icon setting-icon" aria-hidden="true"><use href="#i-sparkles"></use></svg>
+                    <span class="setting-text">
+                      <span class="setting-heading"><span data-localize="perceived_size">Perceived Real Size</span></span>
+                      <span class="setting-desc" data-localize="perceived_size_desc">Turns on every item below and sets World Scale to 1.4.</span>
+                    </span>
+                  </label>
+                  <div class="settings-control">
+                    <input type="checkbox" class="switch" id="perceived-size-toggle" name="perceived-size-toggle" checked>
+                  </div>
+                </div>
+
+                <div class="settings-row setting-tile">
+                  <label for="wide-roads-toggle" class="setting-label">
+                    <svg class="icon setting-icon" aria-hidden="true"><use href="#i-signpost"></use></svg>
+                    <span class="setting-text">
+                      <span class="setting-heading"><span data-localize="wide_roads">Wider Roads</span></span>
+                      <span class="setting-desc" data-localize="wide_roads_desc">Above scale 1, roads widen by the scale minus 0.1.</span>
+                    </span>
+                  </label>
+                  <div class="settings-control">
+                    <input type="checkbox" class="switch" id="wide-roads-toggle" name="wide-roads-toggle" checked>
+                  </div>
+                </div>
+
+                <div class="settings-row setting-tile">
+                  <label for="bare-bicycle-parking-toggle" class="setting-label">
+                    <svg class="icon setting-icon" aria-hidden="true"><use href="#i-off"></use></svg>
+                    <span class="setting-text">
+                      <span class="setting-heading"><span data-localize="bare_bicycle_parking">Bare Bicycle Parking</span></span>
+                      <span class="setting-desc" data-localize="bare_bicycle_parking_desc">Only a floor: no roof, posts or walls.</span>
+                    </span>
+                  </label>
+                  <div class="settings-control">
+                    <input type="checkbox" class="switch" id="bare-bicycle-parking-toggle" name="bare-bicycle-parking-toggle" checked>
+                  </div>
+                </div>
+
+                <div class="settings-row setting-tile">
+                  <label for="fill-split-buildings-toggle" class="setting-label">
+                    <svg class="icon setting-icon" aria-hidden="true"><use href="#i-building"></use></svg>
+                    <span class="setting-text">
+                      <span class="setting-heading"><span data-localize="fill_split_buildings">Fill Split Buildings</span></span>
+                      <span class="setting-desc" data-localize="fill_split_buildings_desc">Raises the low pieces of a building split into several shapes to its tallest piece.</span>
+                    </span>
+                  </label>
+                  <div class="settings-control">
+                    <input type="checkbox" class="switch" id="fill-split-buildings-toggle" name="fill-split-buildings-toggle" checked>
+                  </div>
+                </div>
+
+                <div class="settings-row setting-tile">
+                  <label for="elevated-height-slider" class="setting-label">
+                    <svg class="icon setting-icon" aria-hidden="true"><use href="#i-arrow-up"></use></svg>
+                    <span class="setting-text">
+                      <span class="setting-heading"><span data-localize="elevated_height">Elevated Road Height</span></span>
+                      <span class="setting-desc" data-localize="elevated_height_desc">Blocks per elevated level and under it. Arnis uses 6.</span>
+                    </span>
+                  </label>
+                  <div class="settings-control">
+                    <input type="range" id="elevated-height-slider" name="elevated-height-slider" min="4" max="16" step="1" value="8">
+                    <span id="elevated-height-value" class="setting-value">8</span>
                   </div>
                 </div>
               </div>
