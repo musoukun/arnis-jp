@@ -1,0 +1,182 @@
+/* arnis-jp: the settings page opens as a panel on the right. The window grows
+   by the panel's width (settings-panel.js), so the map and the start button
+   keep their size and the panel keeps the full settings layout. Loaded after
+   settings.css and only overrides where the page sits. */
+
+:root {
+  --settings-panel-width: 700px;
+}
+
+/* While docked the controls column is a tenth narrower; the map keeps the
+   width it had (main view = MAIN_SHARE of the window in settings-panel.js) */
+body.settings-docked .map-box {
+  width: 65%;
+}
+
+body.settings-docked .controls-box {
+  width: 29%;
+}
+
+/* The world name under Start may shorten with an ellipsis, so the narrower
+   column does not push the gear button out */
+body.settings-docked .start-button-wrap,
+body.settings-docked .world-name-row {
+  min-width: 0;
+}
+
+body.settings-docked .world-name-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Added once the window has grown; the main view stays left of the panel */
+body.settings-docked .container {
+  margin-right: var(--settings-panel-width);
+}
+
+.settings-page {
+  inset: 0 0 0 auto;
+  width: var(--settings-panel-width);
+  max-width: 100vw;
+  border-left: 1px solid rgba(0, 0, 0, 0.35);
+  animation: settings-panel-enter 0.16s ease-out;
+  /* Section menu on the panel's right edge, so it is not left in the middle
+     of the window next to the map */
+  flex-direction: row-reverse;
+}
+
+.settings-page .settings-sidebar {
+  border-right: none;
+  border-left: 1px solid rgba(0, 0, 0, 0.25);
+}
+
+/* Every text 2px smaller than settings.css, so more fits across the panel */
+.settings-page .settings-nav-title { font-size: 12px; }
+.settings-page .settings-nav-sub { font-size: 10px; }
+.settings-page .settings-reset-button { font-size: 11px; }
+.settings-page .settings-topbar h2 { font-size: 20px; }
+.settings-page .settings-topbar p { font-size: 11px; }
+.settings-page .settings-section-head h3 { font-size: 15px; }
+.settings-page .settings-section-head p { font-size: 10.5px; }
+.settings-page .setting-heading { font-size: 12px; }
+.settings-page .setting-desc { font-size: 10px; }
+.settings-page .setting-value { font-size: 11.5px; }
+.settings-page .settings-notice { font-size: 10.5px; }
+.settings-page .tooltip-icon { font-size: 9px; }
+.settings-page .segmented-control .segment { font-size: 11px; }
+.settings-page .choice-title { font-size: 12px; }
+.settings-page .choice-desc { font-size: 10px; }
+.settings-page input[type="text"],
+.settings-page input[type="password"],
+.settings-page input[type="number"],
+.settings-page .settings-select { font-size: 11px; }
+.settings-page .cache-size { font-size: 10.5px; }
+.settings-page .settings-about-version { font-size: 11.5px; }
+.settings-page .clear-cache-button { font-size: 11px; }
+
+/* Narrow section menu: the panel's width goes to the settings */
+.settings-page .settings-sidebar { width: 170px; padding: 14px 8px 12px; gap: 10px; }
+.settings-page .settings-reset-button { min-height: 32px; padding: 6px 8px; }
+
+/* Choice cards one per row: icon, then name over description, radio mark at
+   the right, so no card is left with an empty column beside its text */
+.settings-page .choice-cards {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 6px;
+}
+
+.settings-page .choice-cards .segment {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 1px;
+  padding: 7px 32px 7px 10px;
+}
+
+.settings-page .choice-cards .segment .icon {
+  grid-row: span 2;
+  margin-bottom: 0;
+}
+
+.settings-page .choice-cards .segment::after {
+  top: 50%;
+  right: 10px;
+  width: 14px;
+  height: 14px;
+  transform: translateY(-50%);
+}
+
+/* Smaller fields, buttons and switches */
+.settings-page input[type="text"],
+.settings-page input[type="password"],
+.settings-page input[type="number"],
+.settings-page .settings-select {
+  height: 28px;
+  border-radius: 6px;
+}
+
+.settings-page .settings-select { width: 180px; }
+.settings-page .save-path-browse { width: 30px; height: 28px; border-radius: 0 6px 6px 0; }
+.settings-page .segmented-control { padding: 2px; border-radius: 7px; }
+.settings-page .segmented-control .segment { padding: 4px 9px; border-radius: 5px; }
+.settings-page .clear-cache-button { min-width: 60px; height: 26px; padding: 0 10px; border-radius: 6px; }
+.settings-page .settings-action-button { height: 30px; padding: 0 12px; border-radius: 6px; }
+
+/* Smaller icons, switches and tile padding to match the smaller text */
+.settings-page .icon { width: 16px; height: 16px; }
+.settings-page .setting-icon { width: 16px; height: 16px; }
+.settings-page .settings-section-icon { width: 28px; height: 28px; border-radius: 7px; }
+.settings-page .settings-topbar-icon { width: 30px; height: 30px; border-radius: 8px; }
+.settings-page .settings-topbar-icon .icon { width: 18px; height: 18px; }
+.settings-page .settings-close .icon { width: 18px; height: 18px; }
+.settings-page .settings-brand img { width: 110px; }
+.settings-page .choice-cards .segment .icon { width: 18px; height: 18px; margin-bottom: 3px; }
+.settings-page input.switch { zoom: 0.7; }
+.settings-page .setting-tile { min-height: 46px; padding: 8px 12px; gap: 10px; }
+.settings-page .settings-section { padding: 14px; }
+.settings-page .settings-nav-item { gap: 10px; padding: 6px 10px; }
+
+/* Any control that does not fit beside its name wraps below it, rather than
+   squeezing the name to a word a line */
+.settings-page .setting-tile { flex-wrap: wrap; row-gap: 6px; }
+.settings-page .setting-tile > .setting-label { flex: 1 1 120px; }
+.settings-page .setting-tile > .settings-control { margin-left: auto; }
+
+/* A slider or a text field sits under its name instead of beside it */
+.settings-page .setting-tile:has(input[type="range"]),
+.settings-page .setting-tile:has(input[type="text"]) {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+/* In a column the basis above would set the label's height, so drop it */
+.settings-page .setting-tile:has(input[type="range"]) > .setting-label,
+.settings-page .setting-tile:has(input[type="text"]) > .setting-label {
+  flex: none;
+}
+
+.settings-page .setting-tile:has(input[type="range"]) > .settings-control,
+.settings-page .setting-tile:has(input[type="text"]) > .settings-control {
+  justify-content: flex-start;
+  margin-left: 0;
+}
+
+.settings-page input[type="range"] { width: 200px; }
+/* A text field under its name fills the tile, the browse button included */
+.settings-page .setting-tile:has(input[type="text"]) > .settings-control { width: 100%; }
+.settings-page .setting-tile:has(input[type="text"]) input[type="text"] { flex: 1 1 auto; width: auto; min-width: 0; }
+.settings-page .settings-action-button { font-size: 11.5px; }
+
+@keyframes settings-panel-enter {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}

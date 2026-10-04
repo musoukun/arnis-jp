@@ -1,0 +1,80 @@
+/* arnis-jp: read-out of the main settings under the Start button (settings-summary.js) */
+
+/* The summary takes whatever height the column has left (the 3D preview can
+   claim most of it) and scrolls inside, so the progress bar stays in view. */
+.controls-box .controls-top {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.settings-summary {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin-top: 10px;
+  margin-bottom: 8px;
+}
+
+.settings-summary-title {
+  display: block;
+  font-size: 0.78em;
+  color: var(--ui-muted);
+  margin-bottom: 3px;
+}
+
+.settings-summary-list {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+}
+
+.settings-summary-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 2px 8px;
+  font: inherit;
+  font-size: 0.78em;
+  line-height: 1.25;
+  text-align: left;
+  color: var(--ui-text);
+  background: var(--ui-card);
+  border: 1px solid var(--ui-card-border);
+  border-radius: 4px;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.settings-summary-item.is-wide {
+  grid-column: 1 / -1;
+}
+
+.settings-summary-item:hover {
+  background: var(--ui-tile-hover);
+}
+
+.settings-summary-label {
+  flex-shrink: 0;
+  color: var(--ui-muted);
+  white-space: nowrap;
+}
+
+.settings-summary-value {
+  min-width: 0;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Changed from the default: the value the user picked stands out */
+.settings-summary-item.is-modified {
+  border-color: var(--ui-accent);
+}
+
+.settings-summary-item.is-modified .settings-summary-value {
+  color: var(--ui-accent);
+}

@@ -10,6 +10,8 @@ import {
   flushSettingsStore,
 } from './settings-store.js';
 import { initSettingsLayout, syncSettingsLayout } from './settings-layout.js';
+import { initSettingsSummary, refreshSettingsSummary } from './settings-summary.js';
+import { growWindowForPanel, shrinkWindowAfterPanel, hasRoomForPanel } from './settings-panel.js';
 
 let invoke;
 if (window.__TAURI__) {
@@ -51,6 +53,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   // Before the store restores values, so the cards follow the restored ones.
   initSettingsLayout();
   initDialogs();
+  initSettingsSummary();
   initVoxyLightingCoupling();
   initCavesFillCoupling();
   refreshHeightLimitRow();
@@ -169,6 +172,7 @@ async function applyLocalization(localization) {
   // Update error messages
   window.localization = localization;
   renderOneWorldStatus();
+  refreshSettingsSummary();
   // The map hint lives in the map iframe, which cannot see this assignment.
   document.querySelectorAll('iframe').forEach((frame) => {
     try {
@@ -1155,6 +1159,14 @@ function initSettings() {
   function openSettings() {
     focusBeforeSettings = document.activeElement;
     settingsModal.style.display = "flex";
+    // arnis-jp: the page is a panel on the right; the window grows to make room
+    // first, so the map keeps its size. Without the room it only overlays
+    // (settings-panel.js / settings-panel.css).
+    growWindowForPanel().then(() => {
+      if (settingsModal.style.display === "flex" && hasRoomForPanel()) {
+        document.body.classList.add("settings-docked");
+      }
+    });
     syncSettingsLayout();
     // Focus moves onto the page, so Tab and the arrow keys act on it rather
     // than on the map behind it.
@@ -1168,6 +1180,8 @@ function initSettings() {
   // Close the settings page
   function closeSettings() {
     settingsModal.style.display = "none";
+    document.body.classList.remove("settings-docked");
+    shrinkWindowAfterPanel();
     // Webview teardown events are not guaranteed, so commit here.
     flushSettingsStore();
     cancelSettingsResetConfirm();
@@ -1196,6 +1210,11 @@ function initSettings() {
 
   window.openSettings = openSettings;
   window.closeSettings = closeSettings;
+  // The gear opens the panel and closes it again
+  window.toggleSettings = () => {
+    if (settingsModal.style.display === "flex") closeSettings();
+    else openSettings();
+  };
 
   // Mirrors OBJECT_SKIP_SCALE in src/args.rs
   const OBJECT_SKIP_SCALE = 0.3;
