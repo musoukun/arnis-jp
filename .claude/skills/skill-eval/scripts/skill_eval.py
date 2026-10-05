@@ -1,6 +1,7 @@
 """
 skill_eval: Claude Code のスキルのテストを、セッションの記録（JSONL）から数字で振り返る道具。
-使い方は README.md。スキルごとの設定は profiles/<名前>.json。
+使い方は ../SKILL.md（くわしくは ../references/guide.md）。スキルごとの設定は ../profiles/<名前>.json。
+記録は作業フォルダ（既定はプロジェクトの一番上の skill_eval/。環境変数 SKILL_EVAL_WORK で変えられる）に残す。
 
   python skill_eval.py <プロファイル> list    [件数]         … 最近のセッションを番号つきで並べる（1 が一番新しい）
   python skill_eval.py rerender <記録の HTML>... [--recount] … 作った記録を、今のテンプレートで描き直す（数字は変えない。並べた絵は左右に切り分ける）
@@ -27,25 +28,31 @@ import csv
 import json
 import re
 import shutil
+import os
 import subprocess
 import sys
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+SKILL_DIR = Path(__file__).resolve().parent.parent      # このスキルのフォルダ（.claude/skills/skill-eval）
+PROFILES = SKILL_DIR / "profiles"                      # スキルごとの設定
+TEMPLATE = SKILL_DIR / "assets" / "report.html"        # 記録の HTML の見た目
+PROJECT = Path(os.environ.get("CLAUDE_PROJECT_DIR") or Path.cwd()).resolve()   # 評価するプロジェクトの一番上
+WORK = Path(os.environ.get("SKILL_EVAL_WORK") or PROJECT / "skill_eval").resolve()   # 記録の置き場所（git の対象外）
+REPORTS = WORK / "reports"
 IDLE = 15 * 60      # 道具も動いていないのに 15 分以上なにも起きない間は、放置として作業に数えない
 
 
 # ---------------- 設定と記録の読み込み ----------------
 
 def load_profile(name):
-    path = HERE / "profiles" / f"{name}.json"
+    path = PROFILES / f"{name}.json"
     if not path.exists():
-        sys.exit(f"プロファイルがありません: {path}（README の「別のスキルに使う」を参照）")
+        sys.exit(f"プロファイルがありません: {path}（references/guide.md の「別のスキルに使う」を参照）")
     p = json.loads(path.read_text(encoding="utf-8"))
     p["name"] = name
-    p["root"] = (path.parent / p.get("root", "../../..")).resolve()     # リポジトリの一番上
+    p["root"] = (PROJECT / p.get("root", ".")).resolve()     # 評価するプロジェクトの一番上（root はそこからの相対）
     return p
 
 
@@ -696,8 +703,8 @@ def usage_report(p, names=()):
     """残した記録（reports/sessions/）をまとめて、スキルの文書の行ごとに数える。
     読まれた = どれかの回で、その行を開いた（Read の範囲・cat など）。
     効いた   = その行の目印が、Agent の書いた物（考えの文・コード・報告・質問）に出た（ブロック名・部品名・「」の言葉・法則N）。"""
-    sess = HERE / "reports" / "sessions"
-    hist = HERE / "reports" / "history.csv"
+    sess = REPORTS / "sessions"
+    hist = REPORTS / "history.csv"
     if not names:
         names = [r["session"] for r in csv.DictReader(open(hist, encoding="utf-8-sig")) if r.get("profile") == p["name"]]
     runs = {}
@@ -756,7 +763,7 @@ def usage_report(p, names=()):
           "|---|---|---:|---:|---:|---:|---|"]
     L += [f"| {f} | {h[:40]} | {s['lines']} | {s['unread']} | {s['nomark']} | {s['eff']} | {','.join(sorted(s['runs'])) or '—'} |"
           for (f, h), s in per.items()]
-    out = HERE / "reports" / f"{datetime.now():%Y%m%d-%H%M}_{p['name']}_usage.md"
+    out = REPORTS / f"{datetime.now():%Y%m%d-%H%M}_{p['name']}_usage.md"
     out.write_text("\n".join(L) + "\n", encoding="utf-8")
     return f"記録: {out}\n読まれなかった行 {len(never_read)}、読まれたのに効かなかった行 {len(never_eff)}"
 
@@ -915,7 +922,7 @@ def render_html(payload, images=()):
         else:
             pics.append(old)
     payload = {**payload, "images": pics}
-    tpl = (HERE / "templates" / "report.html").read_text(encoding="utf-8")
+    tpl = TEMPLATE.read_text(encoding="utf-8")
     js = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")   # </script> で切れないように
     return tpl.replace("/*__DATA__*/null", js)
 
@@ -931,14 +938,14 @@ def rerender(html_path, recount=False, profile=None):
     note = ""
     if recount:                                     # 時間と理由の集計・分析の文だけ、残しておいた元の記録からやり直す
         row = payload["row"]
-        src = HERE / "reports" / "sessions" / f"{row['session']}.jsonl"
+        src = REPORTS / "sessions" / f"{row['session']}.jsonl"
         if not src.exists():
             return f"元の記録の控えが無いので、集計し直せません: {src}"
         if not profile:                             # 設定の名前が変わっていたら、history.csv のその回の行の名前を使う
-            hist = HERE / "reports" / "history.csv"
+            hist = REPORTS / "history.csv"
             rows = list(csv.DictReader(open(hist, encoding="utf-8-sig"))) if hist.exists() else []
             names = [r["profile"] for r in rows if r.get("session") == row["session"]] + [payload["profile"]]
-            profile = next((n for n in names if (HERE / "profiles" / f"{n}.json").exists()), payload["profile"])
+            profile = next((n for n in names if (PROFILES / f"{n}.json").exists()), payload["profile"])
         p = load_profile(profile)
         payload["profile"] = row["profile"] = p["name"]
         chunks = payload.get("markdown", "").split("\n\n---\n\n")
@@ -971,7 +978,7 @@ def rerender(html_path, recount=False, profile=None):
 def keep_session(path, helpers=()):
     """元の記録を reports/sessions/ に写して残す（スクラッチパッドなどの一時的な場所は消えるため）。
     helpers はその回の手伝いの Agent の記録で、sessions/<名前>_with/ に写す。"""
-    d = HERE / "reports" / "sessions"
+    d = REPORTS / "sessions"
     d.mkdir(parents=True, exist_ok=True)
     if path.resolve() != (d / f"{path.stem}.jsonl").resolve():
         shutil.copyfile(path, d / f"{path.stem}.jsonl")
@@ -999,12 +1006,12 @@ def report(p, session, code_file=None, compare_name=None, images=(), helpers=())
     row["prompt"] = first[:40].replace("\n", " ")
     stamp = _t(t0).astimezone() if t0 else datetime.now()
     row["started"] = stamp.strftime("%Y-%m-%d %H:%M")
-    out = HERE / "reports"
+    out = REPORTS
     out.mkdir(exist_ok=True)
     # 名前はテストを始めた日時から付ける（同じテストを何回 report しても、同じファイルを上書きする）
     md = out / f"{stamp:%Y%m%d-%H%M}_{p['name']}_{path.stem[:8]}.md"
     text = (f"# スキルのテストの記録（{p['name']}）\n\n- 日時 {row['date']}\n- セッション {path.stem}\n"
-            f"- 元の記録: {kept.relative_to(HERE)}" + (f"（手伝いの Agent {len(helpers)} 人の記録つき）" if helpers else "") + "\n"
+            f"- 元の記録: {kept.relative_to(WORK)}" + (f"（手伝いの Agent {len(helpers)} 人の記録つき）" if helpers else "") + "\n"
             f"- 最初の指示: {row['prompt']}\n\n" + "\n\n---\n\n".join(parts) + "\n")
     md.write_text(text, encoding="utf-8")
     hist = out / "history.csv"                   # テストを重ねたときの移り変わり（1 テスト 1 行）

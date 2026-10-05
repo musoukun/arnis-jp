@@ -21,6 +21,7 @@
 !/.claude/skills/
 /.claude/skills/*
 !/.claude/skills/image2mc-builder/
+!/.claude/skills/skill-eval/
 /*.swp
 *.iml
 *.suo
@@ -62,12 +63,11 @@ gen/
 # fixtures under tests/golden.
 /tools/*
 !/tools/map_viewer.html
-!/tools/skill_eval/
-/tools/skill_eval/reports/
-/tools/skill_eval/versions/
 # image2mc-builder スキルの作業フォルダ（建物ごとの設計・質問・絵・施工の控え・設定）。
 # スキルが使う人の作業フォルダに作るもので、スキルそのものではないのでコミットしない
 /image2mc/
+# skill-eval スキルの作業フォルダ（テストの記録・流れ図・スキルの版の控え）。手元の評価用なのでコミットしない
+/skill_eval/
 __pycache__/
 
 # Miscellaneous

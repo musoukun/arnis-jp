@@ -1,6 +1,6 @@
 {
   "description": "image2mc-builder スキル（写真1枚から Minecraft の建物を再現する）のテストを評価する設定",
-  "root": "../../..",
+  "root": ".",
   "skill_dir": ".claude/skills/image2mc-builder",
   "docs": [
     {

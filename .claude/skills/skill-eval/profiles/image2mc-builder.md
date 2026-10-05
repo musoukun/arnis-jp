@@ -31,12 +31,12 @@ image2mc-builder スキルのテストです。写真1枚から「<建物名>」
 
 ## 2. テストのあとに数字を出す
 
-評価の道具 `tools/skill_eval/`（使い方は `tools/skill_eval/README.md`）。リポジトリの一番上で、テストが終わったあとに1回:
+評価のスキル `.claude/skills/skill-eval/`（使い方は同じフォルダの `SKILL.md`）。リポジトリの一番上で、テストが終わったあとに1回:
 ```text
-python tools\skill_eval\skill_eval.py image2mc-builder list
-python tools\skill_eval\skill_eval.py image2mc-builder report <list の番号> --code <設計名>_test --compare <設計名>_test
+python .claude\skills\skill-eval\scripts\skill_eval.py image2mc-builder list
+python .claude\skills\skill-eval\scripts\skill_eval.py image2mc-builder report <list の番号> --code <設計名>_test --compare <設計名>_test
 ```
-時間・根拠（cite）・コード・正解との違いをまとめた記録が `tools/skill_eval/reports/` に残り、`history.csv` に1行足される。
+時間・根拠（cite）・コード・正解との違いをまとめた記録が 作業フォルダの `skill_eval/reports/` に残り、`history.csv` に1行足される。
 1つずつ見るときは `report` の代わりに `time` / `cite` / `scan` / `code` / `compare`。
 （日本語が化けるときは、先に PowerShell で `$env:PYTHONIOENCODING="utf-8"`）
 
@@ -74,7 +74,7 @@ KFC と別の建物で同じ数字を並べると、KFC だけ良い所が「KFC
 
 1回の改善は、次の8つの手順で回す。速いモデル（Sonnet）で一発で建つことを目指す。
 
-1. **版を残す**: スキルのフォルダ（`.claude/skills/image2mc-builder/`。道具・型・正解の設計を含む）を zip にして `tools/skill_eval/versions/` に置く
+1. **版を残す**: スキルのフォルダ（`.claude/skills/image2mc-builder/`。道具・型・正解の設計を含む）を zip にして 作業フォルダの `skill_eval/versions/` に置く
    （`image2mc-builder_<日時>_<何の前か>.zip`。git には入れない）。いつでも前の版に戻れるようにする
 2. **テストする（Sonnet のサブエージェント）**: 渡すのは写真1枚・OSM の way 番号・スキルの3つのファイルだけ。
    答えになる設計（正解・前のテストの設計）・お手本の画像・既存のプレビューは見せない。設計名は `kfc_test<番号>`。
@@ -88,7 +88,7 @@ KFC と別の建物で同じ数字を並べると、KFC だけ良い所が「KFC
 4. **施工の前で止め、プレビューを確かめてから施工する**: `run.py <設計> check` と、正解（v2）と同じ視点で並べた絵を作り、
    それから `build`。施工前の状態は控えに残るので `reset` で戻せる
 5. **記録を残す（skill_eval）**: サブエージェントの記録（`tasks/<id>.output`）を写して
-   `python tools\skill_eval\skill_eval.py image2mc-builder report <記録> --code <設計> --compare <設計> --images "正解=<v2の絵>,テスト=<テストの絵>"`。
+   `python .claude\skills\skill-eval\scripts\skill_eval.py image2mc-builder report <記録> --code <設計> --compare <設計> --images "正解=<v2の絵>,テスト=<テストの絵>"`。
    HTML の **まとめ（ゴールに届いたか・前の回との差）**・**分析と直す候補**・**処理の流れ**・**前の回と比べる**・**絵を比べる** を見る。
    比べる表は手で作らない（「前の回と比べる」で2つ選ぶ）
 6. **本人に振り返らせる**: テストした Sonnet に、会話の続きとして結果（並べた絵と、正解との違い）を見せ、

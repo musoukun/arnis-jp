@@ -10,7 +10,7 @@ Claude Code でスキルを動かしたあと、そのセッションの記録�
 | スキルが特定の例に偏っていないか | `scan` | 見出しごとに、特定の例（店名など）の言葉が出る行の割合。部品とスキルの文章の対応 |
 | テストが書いたコードの質 | `code` | 部品をどれだけ使えたか、手で書いた所、座標などの直書き |
 | 正解とどれだけ違うか | `compare` | プロファイルに書いた比較の命令を走らせ、違いの数を拾う |
-| 全部まとめて残す | `report` | 上をまとめた記録を `reports/` に Markdown と HTML（表と絵つき）で保存し、`reports/history.csv` に1行足す |
+| 全部まとめて残す | `report` | 上をまとめた記録を作業フォルダ `skill_eval/reports/` に Markdown と HTML（表と絵つき）で保存し、`skill_eval/reports/history.csv` に1行足す |
 
 依存するライブラリはありません（Python 3.10 以上）。
 
@@ -20,8 +20,8 @@ Claude Code でスキルを動かしたあと、そのセッションの記録�
    別のフォルダで開くと記録の置き場所が変わり、見つけられません。
 2. **終わったら、テストのセッションの番号を一覧で確かめて、記録を残す。**
    ```text
-   python tools\skill_eval\skill_eval.py image2mc-builder list
-   python tools\skill_eval\skill_eval.py image2mc-builder report 6 --code kfc_test --compare kfc_test
+   python .claude\skills\skill-eval\scripts\skill_eval.py image2mc-builder list
+   python .claude\skills\skill-eval\scripts\skill_eval.py image2mc-builder report 6 --code kfc_test --compare kfc_test
    ```
    `list` は最近のセッションを、番号（1 が一番新しい）・開始時刻・長さ・最初の指示の書き出しつきで並べます。
    その番号を `report` に渡します。番号は新しいセッションができるとずれるので、`list` の直後に使います。
@@ -34,7 +34,7 @@ Claude Code でスキルを動かしたあと、そのセッションの記録�
    比べる絵は `--images "正解=絵1.png,テスト=絵2.png"` のように「ラベル=パス」で渡します（ラベルは省略可）。
    左右に2枚を並べた1枚の絵（真ん中に白い区切りがある物）を渡すと、左と右の2枚に自動で切り分けて組にします。
    `"正解|テスト=並べた絵.png"` のようにラベルを「|」で区切ると、左右の名前になります。
-   テンプレートを直したあとは `python skill_eval.py rerender <記録の HTML>` で、数字はそのままに描き直せます。
+   テンプレートを直したあとは `python .claude\skills\skill-eval\scripts\skill_eval.py rerender <記録の HTML>` で、数字はそのままに描き直せます。
    同じテストをもう一度 `report` すると、記録のファイルも `history.csv` の行も上書きされます（重なりません）。
    日本語が化けるときは、先に PowerShell で `$env:PYTHONIOENCODING="utf-8"` を実行します。
 
@@ -45,13 +45,13 @@ Claude Code でスキルを動かしたあと、そのセッションの記録�
 ## 命令
 
 ```text
-python skill_eval.py <プロファイル> list    [件数]
-python skill_eval.py <プロファイル> time    [セッション]
-python skill_eval.py <プロファイル> cite    [セッション]
-python skill_eval.py <プロファイル> scan
-python skill_eval.py <プロファイル> code    <ファイル>
-python skill_eval.py <プロファイル> compare [名前]
-python skill_eval.py <プロファイル> report  [セッション] [--code ファイル] [--compare 名前] [--images 絵1,絵2]
+python .claude\skills\skill-eval\scripts\skill_eval.py <プロファイル> list    [件数]
+python .claude\skills\skill-eval\scripts\skill_eval.py <プロファイル> time    [セッション]
+python .claude\skills\skill-eval\scripts\skill_eval.py <プロファイル> cite    [セッション]
+python .claude\skills\skill-eval\scripts\skill_eval.py <プロファイル> scan
+python .claude\skills\skill-eval\scripts\skill_eval.py <プロファイル> code    <ファイル>
+python .claude\skills\skill-eval\scripts\skill_eval.py <プロファイル> compare [名前]
+python .claude\skills\skill-eval\scripts\skill_eval.py <プロファイル> report  [セッション] [--code ファイル] [--compare 名前] [--images 絵1,絵2]
 ```
 
 - `<プロファイル>`: `profiles/<名前>.json` の名前（例 `image2mc-builder`）
@@ -115,7 +115,7 @@ python skill_eval.py <プロファイル> report  [セッション] [--code フ�
 
 | 項目 | 書くこと | 無くてもよいか |
 |---|---|---|
-| `root` | プロファイルから見たリポジトリの一番上（このフォルダの中なら `../../..` のまま） | 必要 |
+| `root` | 評価するプロジェクトの一番上からの相対（ふつうは `.` のまま） | 無くてもよい |
 | `skill_dir` | スキルのフォルダ（`root` から） | 必要 |
 | `docs` | 見出しを数えるファイルと、数える見出しの深さ（`##` = 2） | 必要 |
 | `flow` | スキルの手順（`steps`: `id`・`name`・`when`）。流れ図と、手順ごとの時間に使う | 無いと流れ図を描かない |
@@ -133,4 +133,4 @@ python skill_eval.py <プロファイル> report  [セッション] [--code フ�
 - 時間は記録の時刻から計算するので、道具の実行時間には、許可の確認を待った時間も入ります。
 - 「考える・書く」は、記録の行と行のあいだの時間です。モデルの中で考えた時間と、文を書いた時間は分けられません。
 - サブエージェントの中の作業は数えません（親のセッションだけ）。
-- 記録（`reports/`）は、手元の評価用です。git には入れません。
+- 記録（作業フォルダ `skill_eval/`。環境変数 `SKILL_EVAL_WORK` で場所を変えられる）は、手元の評価用です。git には入れません。
