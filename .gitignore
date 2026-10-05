@@ -22,6 +22,7 @@
 /.claude/skills/*
 !/.claude/skills/image2mc-builder/
 !/.claude/skills/skill-eval/
+!/.claude/skills/map_viewer.html
 /*.swp
 *.iml
 *.suo
@@ -62,7 +63,6 @@ gen/
 # is versioned where it lives; what this repository keeps of it is the exported
 # fixtures under tests/golden.
 /tools/*
-!/tools/map_viewer.html
 # image2mc-builder スキルの作業フォルダ（建物ごとの設計・質問・絵・施工の控え・設定）。
 # スキルが使う人の作業フォルダに作るもので、スキルそのものではないのでコミットしない
 /image2mc/
